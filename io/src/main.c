@@ -1,9 +1,4 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <commons/log.h>
-#include <commons/config.h>
-#include <utils/utils.h>
+#include "io.h"
 
 t_log* logger; 
 
