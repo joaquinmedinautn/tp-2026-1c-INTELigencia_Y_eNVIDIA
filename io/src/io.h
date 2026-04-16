@@ -3,6 +3,8 @@
 
 #include <utils/utils.h>
 
-void ObtenerConfig();
+extern t_log* logger;
+
+void ObtenerConfig(char* path, char** ip_scheduler, int* puerto_scheduler);
 
 #endif
