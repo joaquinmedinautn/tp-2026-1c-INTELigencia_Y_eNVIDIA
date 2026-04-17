@@ -1,44 +1,33 @@
 #include "io.h"
 
-t_log* logger;
+t_config *config;
+char *ip_kernel_scheduler;
+int puerto_kernel_scheduler;
+t_log_level log_level;
+t_log *logger;
+int socket_kernel_scheduler;
 
-void ObtenerConfig(char* path, char** ip_scheduler, int* puerto_scheduler) {
-    t_config* config = config_create(path);
-    *ip_scheduler     = config_get_string_value(config, "IP_SCHEDULER");
-    *puerto_scheduler = config_get_int_value(config, "PUERTO_SCHEDULER");
-    config_destroy(config);
+void ObtenerConfig()
+{
+    config = config_create("io.config");
+    ip_kernel_scheduler = config_get_string_value(config, "IP_KERNEL_SCHEDULER");
+    puerto_kernel_scheduler = config_get_int_value(config, "PUERTO_KERNEL_SCHEDULER");
 }
-int main(int argc, char* argv[]){
-    
-    char* ip_scheduler;       
-    int puerto_scheduler;     
 
-    //aca lee el config
-    ObtenerConfig(argv[1], &ip_scheduler, &puerto_scheduler);
-    
-    
-    saludar("I/O");    
+int main(int argc, char *argv[])
+{
 
-    logger= log_create("io.log","IO",true,LOG_LEVEL_INFO);
-    char* tipo = argv[2];
-    
-    
-    //se conecta con el sch
-    int fd_scheduler = CrearConexion(ip_scheduler,puerto_scheduler);
-    log_info(logger,"## Conectado a Kernel Scheduler"); 
+    saludar("I/O");
 
-    //le aviso al scheduler con quien se conecto
-    t_tipo_modulo tipo = HANDSHAKE_IO; 
-    send(fd_scheduler,&tipo,sizeof(tipo),0);
+    ObtenerConfig();
 
+    logger = log_create("io.log", "IO", true, log_level);
+    socket_kernel_scheduler = CrearConexion(ip_kernel_scheduler, puerto_kernel_scheduler);
 
-    pause();
-
-    close(fd_scheduler);
-    
-    log_destroy(logger);
+    while (1)
+    {
+        sleep(10);
+    }
 
     return 0;
 }
-
-

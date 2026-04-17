@@ -1,33 +1,32 @@
-#include <swap.h>
+#include "swap.h"
 
-void ObtenerConfig(char* path, char** ip_km, int* puerto_km) {
-    t_config* config = config_create(path);
-    *ip_km     = config_get_string_value(config, "IP_KERNEL_MEMORY");
-    *puerto_km = config_get_int_value(config, "PUERTO_KERNEL_MEMORY");
+t_config *config;
+char *ip_kernel_memory;
+int puerto_kernel_memory;
+t_log_level log_level;
+t_log *logger;
+int socket_kernel_memory;
+
+void ObtenerConfig()
+{
+    config = config_create("swap.config");
+    ip_kernel_memory = config_get_string_value(config, "IP_KERNEL_MEMORY");
+    puerto_kernel_memory = config_get_int_value(config, "PUERTO_KERNEL_MEMORY");
 }
-t_log* logger;
 
-int main(int argc,char* argv[]){
-    char* ip_kernel_memory;
-    int puerto_kernel_memory;
+int main(int argc, char *argv[])
+{
 
-    ObtenerConfig(argv[1],&ip_kernel_memory,&puerto_kernel_memory);
+    saludar("swap");
+    ObtenerConfig();
 
-    logger = log_create("swap_log","SWAP",true,LOG_LEVEL_INFO);
-    saludar("Soy el Swap");
+    logger = log_create("swap.log", "SWAP", true, log_level);
+    socket_kernel_memory = CrearConexion(ip_kernel_memory, puerto_kernel_memory);
 
-    //Esta es la parte del socket
-    int fd_kernel_memory = CrearConexion(ip_kernel_memory,puerto_kernel_memory);
-    log_info(logger,"## Conectando a Kernel Memory"); 
-
-    //Parte del handshake
-    t_tipo_modulo tipo = HANDSHAKE_SWAP;
-    send(fd_kernel_memory,&tipo,sizeof(tipo),0);
-
-    pause();
-
-    close(fd_kernel_memory);
+    while (1)
+    {
+        sleep(10);
+    }
 
     return 0;
-
 }

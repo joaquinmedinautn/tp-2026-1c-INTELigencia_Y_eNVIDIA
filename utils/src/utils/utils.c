@@ -1,5 +1,7 @@
 #include <utils/utils.h>
 
+extern t_log* logger;
+
 void saludar(char *quien)
 {
     printf("Hola desde %s!!\n", quien);
@@ -11,13 +13,16 @@ int IniciarServidor(int puerto)
 
     struct addrinfo hints, *server_info;
 
+    char puerto_str[6];
+
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;
 
-    getaddrinfo(NULL, PUERTO, &hints, &server_info);
+    snprintf(puerto_str, sizeof(puerto_str), "%d", puerto);
 
+    getaddrinfo(NULL, puerto_str, &hints, &server_info);
 
     socket_servidor = socket(server_info->ai_family,
                              server_info->ai_socktype,
@@ -27,7 +32,6 @@ int IniciarServidor(int puerto)
     setsockopt(socket_servidor, SOL_SOCKET, SO_REUSEPORT, &(int){1}, sizeof(int));
 
     bind(socket_servidor, server_info->ai_addr, server_info->ai_addrlen);
-
 
     listen(socket_servidor, SOMAXCONN);
 
@@ -45,19 +49,21 @@ int EsperarConexion(int socket_servidor)
 	return socket_cliente;
 }
 
-in CrearConexion(char *ip, int puerto)
-{
-    int crear_conexion(char *ip, char* puerto)
+int CrearConexion(char *ip, int puerto)
 {
 	struct addrinfo hints;
 	struct addrinfo *server_info;
+
+    char puerto_str[6];
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_INET;
 	hints.ai_socktype = SOCK_STREAM;
 	hints.ai_flags = AI_PASSIVE;
 
-	getaddrinfo(ip, puerto, &hints, &server_info);
+    snprintf(puerto_str, sizeof(puerto_str), "%d", puerto);
+
+	getaddrinfo(ip, puerto_str, &hints, &server_info);
 
 	int socket_cliente = socket(server_info->ai_family,
                          server_info->ai_socktype,
@@ -68,5 +74,4 @@ in CrearConexion(char *ip, int puerto)
 	freeaddrinfo(server_info);
 
 	return socket_cliente;
-}
 }

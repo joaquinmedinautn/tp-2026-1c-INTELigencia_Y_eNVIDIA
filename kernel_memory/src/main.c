@@ -1,41 +1,47 @@
-#include <stdlib.h>
-#include <stdio.h>
-#include <commons/log.h>
-#include <commons/config.h>
-#include <utils/utils.h> 
+#include "kernel_memory.h"
 
-
-
+t_config *config;
+t_log_level log_level;
+t_log *logger;
 int socket_servidor;
 int puerto_escucha;
-t_config* config;
-t_log* logger;
+int socket_kernel_scheduler;
+int socket_memory_stick;
+int socket_cpu;
+int socket_swap;
 
-int main(int argc, char* argv[]) {
+int main(int argc, char *argv[])
+{
+
     saludar("kernel_memory");
-    
-   
-    config = config_create("kernel_memory.config");
-    puerto_escucha = config_get_int_value(config, "PUERTO_ESCUCHA");
-    logger = log_create("kernel_memory.log", "KERNEL_MEMORY", true, LOG_LEVEL_INFO);
+    ObtenerConfig();
 
-   
+    logger = log_create("kernel_memory.log", "KERNEL_MEMORY", true, log_level);
     socket_servidor = IniciarServidor(puerto_escucha);
-    log_info(logger, "Servidor Memoria escuchando en puerto %d", puerto_escucha);
-    
-    // Espero a la CPU primero 
-    int socket_cpu = EsperarConexion(socket_servidor);
-    log_info(logger, "## CPU Conectada");
 
-    // Espero al Scheduler 
-    int socket_scheduler = EsperarConexion(socket_servidor);
-    log_info(logger, "## Kernel Scheduler Conectado %d", socket_scheduler); 
+    socket_kernel_scheduler = EsperarConexion(socket_servidor);
+    log_info(logger, "Se conecto el modulo de kernel scheduler");
 
-    // Espero el mmory Stick
-    int socket_stick = EsperarConexion(socket_servidor);
-    log_info(logger, "## Memory Stick Conectada"); 
+    socket_memory_stick = EsperarConexion(socket_servidor);
+    log_info(logger, "Se conecto el modulo de memory stick");
 
-    while(1) { sleep(10); }
+    socket_cpu = EsperarConexion(socket_servidor);
+    log_info(logger, "Se conecto el modulo de cpu");
+
+    socket_swap = EsperarConexion(socket_servidor);
+    log_info(logger, "Se conecto el modulo de swap");
+
+    while (1)
+    {
+        sleep(10);
+    }
 
     return 0;
+}
+
+void ObtenerConfig()
+{
+    config = config_create("kernel_memory.config");
+    puerto_escucha = config_get_int_value(config, "PUERTO_ESCUCHA");
+    log_level = log_level_from_string(config_get_string_value(config, "LOG_LEVEL"));
 }

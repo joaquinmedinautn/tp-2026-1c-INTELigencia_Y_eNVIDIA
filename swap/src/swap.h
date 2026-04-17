@@ -3,8 +3,6 @@
 
 #include <utils/utils.h>
 
-extern t_log* logger;
-
-void ObtenerConfig(char* path, char** ip_km, int* puerto_km);
+void ObtenerConfig();
 
 #endif
