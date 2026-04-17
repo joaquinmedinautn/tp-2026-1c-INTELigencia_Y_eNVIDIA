@@ -6,6 +6,7 @@ void ObtenerConfig(char* path, char** ip_scheduler, int* puerto_scheduler) {
     t_config* config = config_create(path);
     *ip_scheduler     = config_get_string_value(config, "IP_SCHEDULER");
     *puerto_scheduler = config_get_int_value(config, "PUERTO_SCHEDULER");
+    config_destroy(config);
 }
 int main(int argc, char* argv[]){
     
@@ -34,7 +35,7 @@ int main(int argc, char* argv[]){
     pause();
 
     close(fd_scheduler);
-    config_destroy(config);
+    
     log_destroy(logger);
 
     return 0;
