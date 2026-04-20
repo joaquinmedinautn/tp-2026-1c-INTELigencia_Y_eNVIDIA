@@ -12,6 +12,8 @@ void ObtenerConfig()
     config = config_create("io.config");
     ip_kernel_scheduler = config_get_string_value(config, "IP_KERNEL_SCHEDULER");
     puerto_kernel_scheduler = config_get_int_value(config, "PUERTO_KERNEL_SCHEDULER");
+
+    config_destroy(config);
 }
 
 int main(int argc, char *argv[])

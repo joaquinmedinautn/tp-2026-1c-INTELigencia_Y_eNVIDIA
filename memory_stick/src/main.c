@@ -17,6 +17,8 @@ void ObtenerConfig()
     log_level = log_level_from_string(config_get_string_value(config, "LOG_LEVEL"));
     ip_kernel_memory = config_get_string_value(config, "IP_KERNEL_MEMORY");
     puerto_kernel_memory = config_get_int_value(config, "PUERTO_KERNEL_MEMORY");
+
+    config_destroy(config);
 }
 
 int main(int argc, char* argv[]) {
@@ -33,6 +35,11 @@ int main(int argc, char* argv[]) {
     log_info(logger, "Se conecto el modulo de cpu");
 
     socket_kernel_memory = CrearConexion(ip_kernel_memory, puerto_kernel_memory);
+
+    while (1)
+    {
+        sleep(10);
+    }
 
     return 0;
 }

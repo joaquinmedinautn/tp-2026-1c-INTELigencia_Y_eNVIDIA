@@ -12,6 +12,8 @@ void ObtenerConfig()
     config = config_create("swap.config");
     ip_kernel_memory = config_get_string_value(config, "IP_KERNEL_MEMORY");
     puerto_kernel_memory = config_get_int_value(config, "PUERTO_KERNEL_MEMORY");
+
+    config_destroy(config);
 }
 
 int main(int argc, char *argv[])
