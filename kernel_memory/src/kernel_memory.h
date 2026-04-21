@@ -5,4 +5,7 @@
 
 void ObtenerConfig();
 
+
+t_dictionary* procesos;
+pthread_mutex_t mx_procesos; 
 #endif

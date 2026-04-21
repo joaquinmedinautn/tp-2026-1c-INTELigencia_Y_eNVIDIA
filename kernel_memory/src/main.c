@@ -4,6 +4,9 @@
 t_config *config;
 t_log_level log_level;
 t_log *logger;
+t_dictionary *procesos;
+pthread_mutex_t mx_procesos;
+
 int socket_servidor;
 int puerto_escucha;
 int socket_kernel_scheduler;
@@ -15,6 +18,22 @@ int instruction_delay;
 
 
 
+void ObtenerConfig() {
+    config = config_create("kernel_memory.config");
+    if (config == NULL){
+        perror("No se pudo crear el config");
+        exit(EXIT_FAILURE);
+    }
+    puerto_escucha = config_get_int_value(config, "PUERTO_ESCUCHA");
+    instruction_delay = config_get_int_value(config, "INTRUCTION_DELAY");
+    scripts_path = string_duplicate(config_get_string_value(config, "SCRIPTS_BASEPATH"));
+
+    char* log_level_str = config_get_string_value(config, "LOG_LEVEL");
+    logger = log_create("kernel_memory.log", "KERNEL_MEMORY", true, log_level);
+
+    config_destroy(config);
+    
+}
 
 // ejecuto cada hilo 
 void atender_cliente(void* void_socket) {
@@ -28,10 +47,9 @@ void atender_cliente(void* void_socket) {
         case KERNEL_SCHEDULER:
             log_info(logger, "## Kernel Scheduler Conectado");
             break;
-        case CPU:
+        case CPU_A_KERNEL_MEMORY:
             log_info(logger, "## CPU Conectada");
             break;
-        case 
 //..... 
         default:
             log_error(logger, "Código de operación desconocido al iniciar");
@@ -70,7 +88,11 @@ void atender_cliente(void* void_socket) {
 int main(int argc, char *argv[]) {
     saludar("kernel_memory");
     ObtenerConfig();
-    logger = log_create("kernel_memory.log", "KERNEL_MEMORY", true, log_level);
+
+    procesos = dictionary_create();
+    pthread_mutex_init(%mx_procesos, NULL);
+
+    //logger = log_create("kernel_memory.log", "KERNEL_MEMORY", true, log_level);
 
     socket_servidor = IniciarServidor(puerto_escucha);
     log_info(logger, "## Kernel Memory escuchando en puerto %d", puerto_escucha);
@@ -90,5 +112,11 @@ int main(int argc, char *argv[]) {
             pthread_detach(hilo);
         }
     }
+
+    dictionary_destroy(procesos);
+    pthread_mutex_destroy(&mx_procesos);
+    free(sripts_path);
+    log_destroy(logger);
+
     return 0;
 }
