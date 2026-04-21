@@ -113,7 +113,7 @@ void *SerializarPaquete(t_paquete *paquete, int bytes)
     offset += sizeof(int); // avanza en memoria
     memcpy(magic + offset, &(paquete->buffer->size), sizeof(int));
     offset += sizeof(int);
-    memcpy(magic + offset, &(paquete->buffer->stream), paquete->buffer->size);
+    memcpy(magic + offset, paquete->buffer->stream, paquete->buffer->size); //en vez de la direccion del puntero, copio el contenido
 
     return magic;
 }
@@ -141,4 +141,32 @@ void EnviarOpCode(int socket_conexion, int OP)
     send(socket_conexion, buffer, 2 * sizeof(int), 0);
     
     free(buffer);
+}
+
+void* RecibirBuffer(int* size, int socket_cliente){
+    void* buffer;
+    recv(socket_cliente, size, sizeof(int), MSG_WAITALL);
+    buffer = malloc(*size);
+    recv(socket_cliente, buffer, *size, MSG_WAITALL)
+    return buffer;
+}
+// obtengo lista de stings, datos del paquete
+t_list* RecibirPaquete(inte socket_cliente){
+    int size;
+    int desplazamiento = 0;
+    void* buffer = RecibirBuffer(&size, socket_cliente);
+    t_list* valores = list_create()
+
+    while (desplazamiento < size){
+        int tamanio;
+        memcpy(&tamanio, buffer + desplazamiento, sizeof(int));
+        desplazamiento += sizeof(int);
+        void* valor = malloc(tamanio);
+        memcpy(valor, buffer + desplazamiento, tamanio);
+        desplazamiento += tamanio;
+        list_add(valores, valor);
+
+    }
+    free(buffer)
+    return valores;
 }

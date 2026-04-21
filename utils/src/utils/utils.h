@@ -36,6 +36,15 @@ typedef struct
 	t_buffer* buffer;
 } t_paquete;
 
+typedef enum{
+    MENSAJE,
+    PAQUETE,
+    CREAR_PROCESO, //preparacion
+    SOLICITUD_INTRUCCION, //fetch
+    FINALIZAR_PROCESO, //libero memoria
+
+} op_code;
+
 
 void saludar(char* quien);
 int IniciarServidor(int puerto);
@@ -47,6 +56,7 @@ void EnviarPaquete(t_paquete *paquete, int socket_conexion);
 void *SerializarPaquete(t_paquete *paquete, int bytes);
 void EnviarOpCode(int socket_conexion, int OP);
 int RecibirOperacion(int socket_cliente);
+
 
 
 #endif

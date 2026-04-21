@@ -31,6 +31,7 @@ void atender_cliente(void* void_socket) {
         case CPU:
             log_info(logger, "## CPU Conectada");
             break;
+        case 
 //..... 
         default:
             log_error(logger, "Código de operación desconocido al iniciar");
