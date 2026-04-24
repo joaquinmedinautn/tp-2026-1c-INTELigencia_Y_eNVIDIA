@@ -115,13 +115,19 @@ void *SerializarPaquete(t_paquete *paquete, int bytes)
     offset += sizeof(int);
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 0fd08f6 (Agregados los semaforos, mutex y modificacion de utils)
     memcpy(magic + offset, paquete->buffer->stream, paquete->buffer->size); //en vez de la direccion del puntero, copio el contenido
 =======
     memcpy(magic + offset, paquete->buffer->stream, paquete->buffer->size);
 >>>>>>> 71d4d3c (Agregados los semaforos, mutex y modificacion de utils)
+<<<<<<< HEAD
 =======
     memcpy(magic + offset, &(paquete->buffer->stream), paquete->buffer->size);
 >>>>>>> parent of 71d4d3c (Agregados los semaforos, mutex y modificacion de utils)
+=======
+>>>>>>> 0fd08f6 (Agregados los semaforos, mutex y modificacion de utils)
 
     return magic;
 }
