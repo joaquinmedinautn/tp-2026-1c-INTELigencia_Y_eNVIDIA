@@ -80,7 +80,7 @@ int RecibirOperacion(int socket_cliente)
 {
 	int op_code;
 	if(recv(socket_cliente, &op_code, sizeof(int), MSG_WAITALL) > 0)
-		return op_code;
+    return op_code;
 	else
 	{
 		close(socket_cliente);
@@ -147,17 +147,17 @@ void* RecibirBuffer(int* size, int socket_cliente){
     void* buffer;
     recv(socket_cliente, size, sizeof(int), MSG_WAITALL);
     buffer = malloc(*size);
-    recv(socket_cliente, buffer, *size, MSG_WAITALL)
+    recv(socket_cliente, buffer, *size, MSG_WAITALL);
     return buffer;
 }
 // obtengo lista de stings, datos del paquete
-t_list* RecibirPaquete(inte socket_cliente){
+t_list* RecibirPaquete(int socket_cliente){
     int size;
     int desplazamiento = 0;
     void* buffer = RecibirBuffer(&size, socket_cliente);
-    t_list* valores = list_create()
+    t_list* valores = list_create();
 
-    while (desplazamiento < size){
+    while(desplazamiento < size){
         int tamanio;
         memcpy(&tamanio, buffer + desplazamiento, sizeof(int));
         desplazamiento += sizeof(int);
@@ -167,6 +167,6 @@ t_list* RecibirPaquete(inte socket_cliente){
         list_add(valores, valor);
 
     }
-    free(buffer)
+    free(buffer);
     return valores;
 }
