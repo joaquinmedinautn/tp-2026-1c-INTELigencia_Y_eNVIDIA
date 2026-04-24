@@ -114,10 +114,14 @@ void *SerializarPaquete(t_paquete *paquete, int bytes)
     memcpy(magic + offset, &(paquete->buffer->size), sizeof(int));
     offset += sizeof(int);
 <<<<<<< HEAD
+<<<<<<< HEAD
     memcpy(magic + offset, paquete->buffer->stream, paquete->buffer->size); //en vez de la direccion del puntero, copio el contenido
 =======
     memcpy(magic + offset, paquete->buffer->stream, paquete->buffer->size);
 >>>>>>> 71d4d3c (Agregados los semaforos, mutex y modificacion de utils)
+=======
+    memcpy(magic + offset, &(paquete->buffer->stream), paquete->buffer->size);
+>>>>>>> parent of 71d4d3c (Agregados los semaforos, mutex y modificacion de utils)
 
     return magic;
 }
@@ -145,6 +149,7 @@ void EnviarOpCode(int socket_conexion, int OP)
     send(socket_conexion, buffer, 2 * sizeof(int), 0);
     
     free(buffer);
+<<<<<<< HEAD
 }
 
 <<<<<<< HEAD
@@ -197,4 +202,6 @@ t_list* RecibirPaquete(int socket_cliente){
     }
     free(buffer);
     return valores;
+=======
+>>>>>>> parent of 71d4d3c (Agregados los semaforos, mutex y modificacion de utils)
 }
