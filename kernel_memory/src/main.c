@@ -125,7 +125,7 @@ int main(int argc, char *argv[])
 
     dictionary_destroy(procesos);
     pthread_mutex_destroy(&mx_procesos);
-    free(sripts_path);
+    free(scripts_path);
     log_destroy(logger);
 
     return 0;

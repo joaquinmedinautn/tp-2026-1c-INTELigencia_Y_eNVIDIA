@@ -48,11 +48,6 @@ typedef enum
     PROCESO
 } utils_op_code_kernel_memory;
 
-typedef enum
-{
-    PROCESO
-} utils_op_code_cpu;
-
 typedef struct
 {
 	int size;
@@ -66,7 +61,7 @@ typedef struct
 } t_paquete;
 
 typedef enum{
-    
+
     CREAR_PROCESO, //preparacion
     SOLICITUD_INTRUCCION, //fetch
     FINALIZAR_PROCESO, //libero memoria
