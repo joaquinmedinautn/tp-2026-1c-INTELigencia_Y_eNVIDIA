@@ -25,16 +25,6 @@ int main(int argc, char *argv[])
     logger = log_create("io.log", "IO", true, log_level);
     socket_kernel_scheduler = CrearConexion(ip_kernel_scheduler, puerto_kernel_scheduler);
     EnviarOpCode(socket_kernel_scheduler, IO);
-
-    //La parte del Handshake
-    utils_op_code_kernel_scheduler mi_tipo = IO;
-    send(socket_kernel_scheduler, &mi_tipo, sizeof(mi_tipo), 0);
-
     
-    while (1)
-    {
-        sleep(10);
-    }
-
     return 0;
 }

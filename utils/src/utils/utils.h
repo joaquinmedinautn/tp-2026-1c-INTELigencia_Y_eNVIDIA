@@ -15,7 +15,7 @@
 
 typedef enum
 {
-    CPU_A_MEMORY_STICK
+    CPU_A_MEMORY_STICK,
     LEER,
     ESCRIBIR
 } utils_op_code_memory_stick;
@@ -66,12 +66,10 @@ typedef struct
 } t_paquete;
 
 typedef enum{
-    MENSAJE,
-    PAQUETE,
+    
     CREAR_PROCESO, //preparacion
     SOLICITUD_INTRUCCION, //fetch
     FINALIZAR_PROCESO, //libero memoria
-
 } op_code;
 
 

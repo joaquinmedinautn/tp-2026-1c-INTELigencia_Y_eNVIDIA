@@ -113,21 +113,7 @@ void *SerializarPaquete(t_paquete *paquete, int bytes)
     offset += sizeof(int); // avanza en memoria
     memcpy(magic + offset, &(paquete->buffer->size), sizeof(int));
     offset += sizeof(int);
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 0fd08f6 (Agregados los semaforos, mutex y modificacion de utils)
     memcpy(magic + offset, paquete->buffer->stream, paquete->buffer->size); //en vez de la direccion del puntero, copio el contenido
-=======
-    memcpy(magic + offset, paquete->buffer->stream, paquete->buffer->size);
->>>>>>> 71d4d3c (Agregados los semaforos, mutex y modificacion de utils)
-<<<<<<< HEAD
-=======
-    memcpy(magic + offset, &(paquete->buffer->stream), paquete->buffer->size);
->>>>>>> parent of 71d4d3c (Agregados los semaforos, mutex y modificacion de utils)
-=======
->>>>>>> 0fd08f6 (Agregados los semaforos, mutex y modificacion de utils)
 
     return magic;
 }
@@ -155,11 +141,9 @@ void EnviarOpCode(int socket_conexion, int OP)
     send(socket_conexion, buffer, 2 * sizeof(int), 0);
     
     free(buffer);
-<<<<<<< HEAD
+
 }
 
-<<<<<<< HEAD
-=======
 void EliminarPaquete(t_paquete* paquete)
 {
 	free(paquete->buffer->stream);
@@ -177,7 +161,7 @@ void AgregarAPaquete(t_paquete* paquete, void* valor, int tamanio)
 	paquete->buffer->size += tamanio + sizeof(int);
 }
 
->>>>>>> 71d4d3c (Agregados los semaforos, mutex y modificacion de utils)
+
 void* RecibirBuffer(int* size, int socket_cliente){
     void* buffer;
     recv(socket_cliente, size, sizeof(int), MSG_WAITALL);
@@ -185,10 +169,7 @@ void* RecibirBuffer(int* size, int socket_cliente){
     recv(socket_cliente, buffer, *size, MSG_WAITALL);
     return buffer;
 }
-<<<<<<< HEAD
-=======
 
->>>>>>> 71d4d3c (Agregados los semaforos, mutex y modificacion de utils)
 // obtengo lista de stings, datos del paquete
 t_list* RecibirPaquete(int socket_cliente){
     int size;
@@ -204,10 +185,8 @@ t_list* RecibirPaquete(int socket_cliente){
         memcpy(valor, buffer + desplazamiento, tamanio);
         desplazamiento += tamanio;
         list_add(valores, valor);
-
     }
     free(buffer);
+
     return valores;
-=======
->>>>>>> parent of 71d4d3c (Agregados los semaforos, mutex y modificacion de utils)
 }

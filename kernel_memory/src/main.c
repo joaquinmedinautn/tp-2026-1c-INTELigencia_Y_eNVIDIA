@@ -1,11 +1,11 @@
-##include "kernel_memory.h"
+#include "kernel_memory.h"
 #include <pthread.h>
 
 t_config *config;
 t_log_level log_level;
 t_log *logger;
 t_dictionary *procesos;
-pthread_mutex_t mx_procesos;
+pthread_mutex_t mutex_procesos;
 
 int socket_servidor;
 int puerto_escucha;
@@ -50,9 +50,7 @@ void atender_cliente(void* void_socket) {
         case CPU_A_KERNEL_MEMORY:
             log_info(logger, "## CPU Conectada");
             break;
-<<<<<<< Updated upstream
-//..... 
-=======
+
 
         case CPU_A_KERNEL_MEMORY:
             socket_cpu = socket_misterioso;
@@ -61,8 +59,6 @@ void atender_cliente(void* void_socket) {
         case SWAP:
             socket_swap = socket_misterioso;
             break;
-
->>>>>>> Stashed changes
         default:
             log_error(logger, "Código de operación desconocido al iniciar");
             close(socket_cliente);
@@ -97,20 +93,14 @@ void atender_cliente(void* void_socket) {
     close(socket_cliente);
 }
 
-<<<<<<< Updated upstream
-int main(int argc, char *argv[]) {
-=======
-
-
 int main(int argc, char *argv[])
 {
 
->>>>>>> Stashed changes
     saludar("kernel_memory");
     ObtenerConfig();
 
     procesos = dictionary_create();
-    pthread_mutex_init(%mx_procesos, NULL);
+    pthread_mutex_init(&mutex_procesos, NULL);
 
     //logger = log_create("kernel_memory.log", "KERNEL_MEMORY", true, log_level);
 
