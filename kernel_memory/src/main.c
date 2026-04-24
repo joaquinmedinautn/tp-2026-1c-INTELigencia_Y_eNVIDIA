@@ -50,7 +50,19 @@ void atender_cliente(void* void_socket) {
         case CPU_A_KERNEL_MEMORY:
             log_info(logger, "## CPU Conectada");
             break;
+<<<<<<< Updated upstream
 //..... 
+=======
+
+        case CPU_A_KERNEL_MEMORY:
+            socket_cpu = socket_misterioso;
+            break;
+
+        case SWAP:
+            socket_swap = socket_misterioso;
+            break;
+
+>>>>>>> Stashed changes
         default:
             log_error(logger, "Código de operación desconocido al iniciar");
             close(socket_cliente);
@@ -85,7 +97,15 @@ void atender_cliente(void* void_socket) {
     close(socket_cliente);
 }
 
+<<<<<<< Updated upstream
 int main(int argc, char *argv[]) {
+=======
+
+
+int main(int argc, char *argv[])
+{
+
+>>>>>>> Stashed changes
     saludar("kernel_memory");
     ObtenerConfig();
 

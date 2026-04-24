@@ -22,10 +22,13 @@ int main(int argc, char *argv[])
     logger = log_create("cpu.log", "CPU", true, log_level);
     
     socket_kernel_scheduler = CrearConexion(ip_kernel_scheduler, puerto_kernel_scheduler);
+    EnviarOpCode(socket_kernel_scheduler, CPU_A_KERNEL_SCHEDULER);
 
     socket_kernel_memory = CrearConexion(ip_kernel_memory, puerto_kernel_memory);
+    EnviarOpCode(socket_kernel_memory, CPU_A_KERNEL_MEMORY);
 
     socket_memory_stick = CrearConexion(ip_memory_stick, puerto_memory_stick);
+    EnviarOpCode(socket_memory_stick, CPU_A_MEMORY_STICK);
 
 
     while (1)
