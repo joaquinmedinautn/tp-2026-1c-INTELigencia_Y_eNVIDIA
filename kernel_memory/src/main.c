@@ -50,8 +50,6 @@ void atender_cliente(void* void_socket) {
         case CPU_A_KERNEL_MEMORY:
             log_info(logger, "## CPU Conectada");
             break;
-
-
         case CPU_A_KERNEL_MEMORY:
             socket_cpu = socket_misterioso;
             break;
@@ -75,16 +73,37 @@ void atender_cliente(void* void_socket) {
         }
 
         switch (cod_op_mensaje) {
-            case CREAR_PROCESO: 
+            case CREAR_PROCESO: {
 
-                log_info(logger, "## PID: <PID> Proceso Creado"); 
+                t_list* valores = RecibirPaquete(socket_cliente);
+                uint32_t pid = *(uint32_t*)list_get(valores, 0);
+                char* path = list_get(valores, 1);
+
+                cargar_instrucciones(pid, path); 
+                log_info(logger, "## PID: %d  Proceso Creado", pid); 
+
+                EnviarOpCode(socket_cliente, MENSAJE); 
+                list_destroy_and_destroy_elements(valores, free);
                 break;
+            }
+            case SOLICITUD_INSTRUCCION: {
+               t_list* valores = RecibirPaquete(socket_cliente);
+                uint32_t pid = *(uint32_t*)list_get(valores, 0);
+                uint32_t pc = *(uint32_t*)list_get(valores, 1);
 
-            case SOLICITUD_INSTRUCCION: 
-                usleep(instruction_delay * 1000);
-                log_info(logger, "## PID: <PID> <PC> Instrucción: <TEXTO>"); 
+                char* instruccion = obtener_instruccion(pid, pc); 
+                usleep(instruction_delay * 1000); // latencia obligatoria
+                log_info(logger, "## PID: %d %d Instrucción: %s", pid, pc, instruccion); 
+
+                // envio el string a la CPU
+                t_paquete* res = CrearPaquete(SOLICITUD_INSTRUCCION);
+                AgregarAPaquete(res, instruccion, strlen(instruccion) + 1);
+                EnviarPaquete(res, socket_cliente);
+                EliminarPaquete(res);
+
+                list_destroy_and_destroy_elements(valores, free);
                 break;
-
+            }
             default:
                 log_warning(logger, "Operación desconocida");
                 break;
@@ -102,8 +121,7 @@ int main(int argc, char *argv[])
     procesos = dictionary_create();
     pthread_mutex_init(&mutex_procesos, NULL);
 
-    //logger = log_create("kernel_memory.log", "KERNEL_MEMORY", true, log_level);
-
+    
     socket_servidor = IniciarServidor(puerto_escucha);
     log_info(logger, "## Kernel Memory escuchando en puerto %d", puerto_escucha);
 
