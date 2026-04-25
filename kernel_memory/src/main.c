@@ -1,5 +1,5 @@
 #include "kernel_memory.h"
-#include <pthread.h>
+
 
 t_config *config;
 t_log_level log_level;
@@ -53,7 +53,6 @@ void atender_cliente(void* void_socket) {
         case CPU_A_KERNEL_MEMORY:
             socket_cpu = socket_misterioso;
             break;
-
         case SWAP:
             socket_swap = socket_misterioso;
             break;
@@ -102,6 +101,54 @@ void atender_cliente(void* void_socket) {
                 EliminarPaquete(res);
 
                 list_destroy_and_destroy_elements(valores, free);
+                break;
+            }
+            case LECTURA_MEMORIA: { // Mock, la CPu enviara pedidos de lectura, como no hay segmentacion real, el memory loguea la peticion y devuele un valor generico 0 
+                                    // para que la cpu no quede en la espera 
+                //logica de repeticion 
+                t_list* valores = RecibirPaquete(socket_cliente);
+                uint32_t pid = *(uint32_t*)list_get(valores, 0);
+                uint32_t dir_fisica = *(uint32_t*)list_get(valores, 1);
+                uint32_t tamanio = *(uint32_t*)list_get(valores, 2);
+
+                // log obligatorio de acceso a espacio de usuario 
+                log_info(logger, "## PID: %d Lectura Dir. Física: %d Tamaño: %d", pid, dir_fisica, tamanio);
+
+                // respuesta mock (valor 0) para que la CPU no se bloquee
+                uint32_t valor_mock = 0;
+                t_paquete* res = CrearPaquete(LECTURA_MEMORIA);
+                AgregarAPaquete(res, &valor_mock, sizeof(uint32_t));
+                EnviarPaquete(res, socket_cliente);
+                EliminarPaquete(res);
+
+                list_destroy_and_destroy_elements(valores, free);
+                break;
+            }
+
+            case ESCRITURA_MEMORIA: { // Mock, se logea la direccion fisica y el tamanio, pero no se persiste en ningun lado. 
+                                    //Se responde con un ok (MENSAJE) para confirmar la repeticion. 
+                t_list* valores = RecibirPaquete(socket_cliente);
+                uint32_t pid = *(uint32_t*)list_get(valores, 0);
+                uint32_t dir_fisica = *(uint32_t*)list_get(valores, 1);
+                uint32_t tamanio = *(uint32_t*)list_get(valores, 2);
+
+                log_info(logger, "## PID: %d Escritura Dir. Física: %d Tamaño: %d", pid, dir_fisica, tamanio); 
+
+                // respuesta Mock de confirmacion
+                EnviarOpCode(socket_cliente, MENSAJE); 
+
+                list_destroy_and_destroy_elements(valores, free);
+                break;
+            }
+
+            case SOLICITUD_ESPACIO_LIBRE: { // mock, el scheduler necesita saber si hay espacio para pasar procesos a READY.
+                                            // devolvemos un valor fijo, para permitir el avance de las pruebas.
+                uint32_t espacio_libre = 1024; // valor fijo mock
+                
+                t_paquete* res = CrearPaquete(SOLICITUD_ESPACIO_LIBRE);
+                AgregarAPaquete(res, &espacio_libre, sizeof(uint32_t));
+                EnviarPaquete(res, socket_cliente);
+                EliminarPaquete(res);
                 break;
             }
             default:

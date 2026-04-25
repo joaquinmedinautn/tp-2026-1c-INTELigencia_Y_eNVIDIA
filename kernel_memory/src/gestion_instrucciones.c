@@ -1,4 +1,4 @@
-#include "../include/gestor_instrucciones.h"
+#include "kernel_memory.h"
 
 
 extern t_dictionary* procesos;
