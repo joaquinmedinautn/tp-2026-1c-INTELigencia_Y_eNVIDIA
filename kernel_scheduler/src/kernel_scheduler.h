@@ -20,6 +20,8 @@ typedef struct
     char* codigo;
     t_estado estado;
     int prioridad;
+    int dir_logica_io;
+    int tamanio_io;
 } proceso;
 
 typedef struct
@@ -35,6 +37,11 @@ typedef struct
     int socket;
     char tipo_io[20];  // "STDIN", "STDOUT", "SLEEP"
 } t_io_conectado;
+
+typedef struct {
+    t_cpu_conectada* cpu;
+    int pid;
+} t_args_quantum;
 
 void IniciarSemaforos();
 void ObtenerConfig();
@@ -54,5 +61,8 @@ void IniciarProceso(int tamanio, char *codigo);
 char* NombreEstado(t_estado estado);
 void CambiarEstado(proceso* p, t_estado nuevo_estado);
 proceso* BuscarProceso(int pid);
+void EjecutarBSOD();
+void *EscucharKernelMemory(void* args);
+void *HiloQuantum(void *args);
 
 #endif

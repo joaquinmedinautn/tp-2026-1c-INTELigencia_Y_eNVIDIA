@@ -1,6 +1,6 @@
 #include "kernel_scheduler.h"
 
-char* path_proceso_inicial;
+char *path_proceso_inicial;
 int socket_servidor;
 int puerto_escucha;
 t_config *config;
@@ -9,10 +9,16 @@ int socket_io;
 int socket_kernel_memory;
 char *ip_kernel_memory;
 int puerto_kernel_memory;
+int rr_quantum;
+bool quantum_activo = false;
+char *algoritmo;
 t_log *logger;
 t_log_level log_level;
 t_queue *cola_new;
 t_queue *cola_ready;
+t_queue *cola_block;
+t_queue *cola_susp_block;
+t_queue *cola_susp_ready;
 sem_t sem_new;
 sem_t sem_ready;
 sem_t sem_cpu_disponible;
@@ -21,9 +27,13 @@ pthread_mutex_t mutex_new;
 pthread_mutex_t mutex_cpus;
 pthread_mutex_t mutex_ios;
 pthread_mutex_t mutex_procesos;
+pthread_mutex_t mutex_block;
+pthread_mutex_t mutex_susp;
+pthread_mutex_t mutex_kernel_memory;
+pthread_mutex_t mutex_quantum;
 t_list *lista_cpus;
 t_list *lista_ios;
-t_list* lista_procesos;
+t_list *lista_procesos;
 
 void ObtenerConfig(char *archivo_config)
 {
@@ -32,8 +42,10 @@ void ObtenerConfig(char *archivo_config)
     log_level = log_level_from_string(config_get_string_value(config, "LOG_LEVEL"));
     ip_kernel_memory = config_get_string_value(config, "IP_KERNEL_MEMORY");
     puerto_kernel_memory = config_get_int_value(config, "PUERTO_KERNEL_MEMORY");
+    rr_quantum = config_get_int_value(config, "RR_QUANTUM");
+    algoritmo = config_get_string_value(config, "ALGORITMO_DE_PLANIFICACION");
 
-    // No destruir config aún, puede ser necesario después
+    config_destroy(config);
 }
 
 void IniciarSemaforos()
@@ -45,6 +57,9 @@ void IniciarSemaforos()
     pthread_mutex_init(&mutex_cpus, NULL);
     pthread_mutex_init(&mutex_ios, NULL);
     pthread_mutex_init(&mutex_procesos, NULL);
+    pthread_mutex_init(&mutex_block, NULL);
+    pthread_mutex_init(&mutex_susp, NULL);
+    pthread_mutex_init(&mutex_kernel_memory, NULL);
 }
 
 // Procesar una syscall de la CPU
@@ -52,22 +67,115 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
 {
     int pid;
     char syscall_nombre[50];
-
     recv(cpu->socket, &pid, sizeof(int), MSG_WAITALL);
     recv(cpu->socket, syscall_nombre, sizeof(syscall_nombre), MSG_WAITALL);
 
-    log_info(logger, "## (%d) - Solicito syscall: %s", pid, syscall_nombre);
+    log_info(logger, "## (%d) - Solicitó syscall: %s", pid, syscall_nombre);
 
-    // Cambiar estado a BLOCK
-    proceso* p = BuscarProceso(pid);
+    proceso *p = BuscarProceso(pid);
     CambiarEstado(p, BLOCK);
+
+    pthread_mutex_lock(&mutex_block);
+    queue_push(cola_block, p);
+    pthread_mutex_unlock(&mutex_block);
+
+    if (strcmp(syscall_nombre, "SLEEP") == 0)
+    {
+        int tiempo;
+        recv(cpu->socket, &tiempo, sizeof(int), MSG_WAITALL);
+        EnviarAIO("SLEEP", IO_SLEEP, pid, &tiempo);
+    }
+    else if (strcmp(syscall_nombre, "STDIN") == 0)
+    {
+        int direccion_logica, tamanio;
+        recv(cpu->socket, &direccion_logica, sizeof(int), MSG_WAITALL);
+        recv(cpu->socket, &tamanio, sizeof(int), MSG_WAITALL);
+
+        p->dir_logica_io = direccion_logica;
+        p->tamanio_io = tamanio;
+
+        int params[2] = {tamanio};
+        EnviarAIO("STDIN", IO_STDIN_READ, pid, params);
+    }
+    else if (strcmp(syscall_nombre, "STDOUT") == 0)
+    {
+        int direccion_logica, tamanio;
+        recv(cpu->socket, &direccion_logica, sizeof(int), MSG_WAITALL);
+        recv(cpu->socket, &tamanio, sizeof(int), MSG_WAITALL);
+
+        p->dir_logica_io = direccion_logica;
+        p->tamanio_io = tamanio;
+
+        int params[2] = {direccion_logica, tamanio};
+        EnviarAIO("STDOUT", IO_STDOUT_WRITE, pid, params);
+    }
 
     cpu->ocupado = false;
     cpu->pid_actual = -1;
     sem_post(&sem_cpu_disponible);
+}
 
-    // Aquí se enviaría la orden al IO correspondiente
-    // EnviarAIO(...);
+void EnviarAIO(char *tipo_buscado, int operacion, int pid, void *params)
+{
+    // buscar el IO del tipo correcto en lista_ios
+    pthread_mutex_lock(&mutex_ios);
+    t_io_conectado *io_destino = NULL;
+    for (int i = 0; i < list_size(lista_ios); i++)
+    {
+        t_io_conectado *io = list_get(lista_ios, i);
+        if (strcmp(io->tipo_io, tipo_buscado) == 0)
+        {
+            io_destino = io;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&mutex_ios);
+
+    if (io_destino == NULL)
+    {
+        log_error(logger, "No hay IO de tipo %s conectado", tipo_buscado);
+        return;
+    }
+
+    t_paquete *paquete = CrearPaquete(operacion);
+    AgregarAPaquete(paquete, &pid, sizeof(int));
+
+    if (operacion == IO_SLEEP && params != NULL)
+    {
+        int tiempo = *(int *)params;
+        AgregarAPaquete(paquete, &tiempo, sizeof(int));
+    }
+    else if (operacion == IO_STDIN_READ && params != NULL)
+    {
+        int tamanio = *(int *)params; // params[0] = tamanio
+        AgregarAPaquete(paquete, &tamanio, sizeof(int));
+    }
+    else if (operacion == IO_STDOUT_WRITE && params != NULL)
+    {
+        int *p = (int *)params;
+        int direccion_logica = p[0];
+        int tamanio = p[1];
+
+        // antes de mandar al IO hay que pedir los bytes a Kernel Memory
+        pthread_mutex_lock(&mutex_kernel_memory);
+        t_paquete *paq_km = CrearPaquete(LEER);
+        AgregarAPaquete(paq_km, &pid, sizeof(int));
+        AgregarAPaquete(paq_km, &direccion_logica, sizeof(int));
+        AgregarAPaquete(paq_km, &tamanio, sizeof(int));
+        EnviarPaquete(paq_km, socket_kernel_memory);
+        EliminarPaquete(paq_km);
+
+        int size;
+        void *bytes = RecibirBuffer(&size, socket_kernel_memory);
+        pthread_mutex_unlock(&mutex_kernel_memory);
+
+        // agregar los bytes al paquete para el IO
+        AgregarAPaquete(paquete, bytes, size);
+        free(bytes);
+    }
+
+    EnviarPaquete(paquete, io_destino->socket);
+    EliminarPaquete(paquete);
 }
 
 // Enviar PID a CPU (cuando la CPU pide trabajo)
@@ -237,14 +345,19 @@ void *AtenderCPU(void *args)
                 int pid;
                 recv(cpu->socket, &pid, sizeof(int), MSG_WAITALL);
                 log_info(logger, "## (%d) Proceso devuelto por CPU %d", pid, cpu->id_cpu);
-                
-                proceso* p = BuscarProceso(pid);
+
+                proceso *p = BuscarProceso(pid);
+
+                pthread_mutex_lock(&mutex_quantum);
+                quantum_activo = false;
+                pthread_mutex_unlock(&mutex_quantum);
+
                 CambiarEstado(p, READY);
-                
+
                 pthread_mutex_lock(&mutex_ready);
                 queue_push(cola_ready, p);
                 pthread_mutex_unlock(&mutex_ready);
-                
+
                 sem_post(&sem_ready);
                 cpu->ocupado = false;
                 cpu->pid_actual = -1;
@@ -273,51 +386,58 @@ void *AtenderCPU(void *args)
 void *AtenderIO(void *args)
 {
     t_io_conectado *io = (t_io_conectado *)args;
-    int socket_io = io->socket;
 
     while (1)
     {
-        // El IO se queda esperando órdenes del Scheduler
-        int op_code = RecibirOperacion(socket_io);
+        int op_code = RecibirOperacion(io->socket);
 
         switch (op_code)
         {
-        case IO_STDIN_READ:
+
+        case IO_FINALIZADO:
         {
             int pid;
-            int tamanio;
-            recv(socket_io, &pid, sizeof(int), MSG_WAITALL);
-            recv(socket_io, &tamanio, sizeof(int), MSG_WAITALL);
+            recv(io->socket, &pid, sizeof(int), MSG_WAITALL);
+            proceso *p = BuscarProceso(pid);
 
-            log_info(logger, "## (%d) Inicio de IO - STDIN", pid);
-            // Aquí el IO procesaría la lectura
-            // Simulamos respuesta
-            log_info(logger, "## (%d) Fin de IO - STDIN", pid);
+            if (strcmp(io->tipo_io, "STDIN") == 0)
+            {
+                // el IO manda los bytes que leyó del teclado
+                int size;
+                void *bytes = RecibirBuffer(&size, io->socket);
 
-            // Notificar al scheduler que la IO terminó
-            EnviarOpCode(socket_kernel_memory, IO_FINALIZADO);
-        }
-        break;
+                pthread_mutex_lock(&mutex_kernel_memory);
+                t_paquete *paquete = CrearPaquete(ESCRIBIR);
+                AgregarAPaquete(paquete, &pid, sizeof(int));
+                AgregarAPaquete(paquete, &(p->dir_logica_io), sizeof(int));
+                AgregarAPaquete(paquete, &(p->tamanio_io), sizeof(int));
+                AgregarAPaquete(paquete, bytes, size);
+                EnviarPaquete(paquete, socket_kernel_memory);
+                EliminarPaquete(paquete);
 
-        case IO_STDOUT_WRITE:
-        {
-            int pid;
-            recv(socket_io, &pid, sizeof(int), MSG_WAITALL);
-            log_info(logger, "## (%d) Inicio de IO - STDOUT", pid);
-            // Procesar...
-            log_info(logger, "## (%d) Fin de IO - STDOUT", pid);
-        }
-        break;
+                RecibirOperacion(socket_kernel_memory); // confirmación
+                pthread_mutex_unlock(&mutex_kernel_memory);
 
-        case IO_SLEEP:
-        {
-            int pid;
-            int tiempo;
-            recv(socket_io, &pid, sizeof(int), MSG_WAITALL);
-            recv(socket_io, &tiempo, sizeof(int), MSG_WAITALL);
-            log_info(logger, "## (%d) Inicio de IO - SLEEP por %d ms", pid, tiempo);
-            usleep(tiempo * 1000);
-            log_info(logger, "## (%d) Fin de IO - SLEEP", pid);
+                free(bytes);
+            }
+
+            if (p->estado == SUSP_BLOCK)
+            {
+                CambiarEstado(p, SUSP_READY);
+                pthread_mutex_lock(&mutex_susp);
+                queue_push(cola_susp_ready, p);
+                pthread_mutex_unlock(&mutex_susp);
+                log_info(logger, "## (%d) finalizó IO y pasa a SUSP. READY", p->pid);
+            }
+            else
+            {
+                CambiarEstado(p, READY);
+                pthread_mutex_lock(&mutex_ready);
+                queue_push(cola_ready, p);
+                pthread_mutex_unlock(&mutex_ready);
+                sem_post(&sem_ready);
+                log_info(logger, "## (%d) finalizó IO y pasa a READY", p->pid);
+            }
         }
         break;
 
@@ -328,9 +448,61 @@ void *AtenderIO(void *args)
             pthread_mutex_unlock(&mutex_ios);
             free(io);
             return NULL;
+
+        default:
+            log_error(logger, "Operación desconocida de IO: %d", op_code);
         }
     }
+    return NULL;
+}
 
+void EjecutarBSOD()
+{
+    log_error(logger, "## Blue Screen of Death - Memoria corrupta");
+
+    // cambiar todos los procesos a EXIT
+    pthread_mutex_lock(&mutex_procesos);
+    for (int i = 0; i < list_size(lista_procesos); i++)
+    {
+        proceso *p = list_get(lista_procesos, i);
+        if (p->estado != EXIT)
+        {
+            CambiarEstado(p, EXIT);
+            log_info(logger, "## (%d) finalizó su ejecución con motivo de BSOD", p->pid);
+        }
+    }
+    pthread_mutex_unlock(&mutex_procesos);
+
+    // desconectar todas las CPUs
+    pthread_mutex_lock(&mutex_cpus);
+    for (int i = 0; i < list_size(lista_cpus); i++)
+    {
+        t_cpu_conectada *cpu = list_get(lista_cpus, i);
+        EnviarOpCode(cpu->socket, DESCONEXION);
+    }
+    pthread_mutex_unlock(&mutex_cpus);
+
+    exit(1);
+}
+
+void *EscucharKernelMemory(void *args)
+{
+    while (1)
+    {
+        pthread_mutex_lock(&mutex_kernel_memory); // <-- lock
+        int op_code = RecibirOperacion(socket_kernel_memory);
+        pthread_mutex_unlock(&mutex_kernel_memory); // <-- unlock
+
+        switch (op_code)
+        {
+        case MEMORIA_CORRUPTA:
+            EjecutarBSOD();
+            return NULL;
+
+        default:
+            log_error(logger, "Mensaje desconocido de Kernel Memory: %d", op_code);
+        }
+    }
     return NULL;
 }
 
@@ -346,6 +518,8 @@ void *PlanificadorLargoPlazo(void *args)
         proceso *p = queue_peek(cola_new);
         pthread_mutex_unlock(&mutex_new);
 
+        pthread_mutex_lock(&mutex_kernel_memory);
+
         t_paquete *paquete = CrearPaquete(CARGAR_PROC);
         AgregarAPaquete(paquete, &(p->pid), sizeof(int));
         AgregarAPaquete(paquete, p->codigo, strlen(p->codigo) + 1);
@@ -354,15 +528,17 @@ void *PlanificadorLargoPlazo(void *args)
 
         int respuesta_memoria = RecibirOperacion(socket_kernel_memory);
 
+        pthread_mutex_unlock(&mutex_kernel_memory);
+
         if (respuesta_memoria == PROCESO_CARGADO)
         {
             log_info(logger, "## (%d) Se crea el proceso - Estado: NEW", p->pid);
-            log_info(logger, "Se añade el proceso %d a READY", p->pid);
 
-            pthread_mutex_lock(&mutex_ready);
             CambiarEstado(p, READY);
+            pthread_mutex_lock(&mutex_ready);
             queue_push(cola_ready, queue_pop(cola_new));
             pthread_mutex_unlock(&mutex_ready);
+            log_info(logger, "Se añade el proceso %d a READY", p->pid);
 
             sem_post(&sem_ready);
         }
@@ -415,7 +591,7 @@ void *PlanificadorCortoPlazo(void *args)
         cpu_libre->pid_actual = p->pid;
 
         // Cambiar estado a EXEC
-        CambiarEstado(p, EXEC);  
+        CambiarEstado(p, EXEC);
 
         // Enviar el proceso a la CPU
         t_paquete *paquete = CrearPaquete(PROCESO);
@@ -426,8 +602,21 @@ void *PlanificadorCortoPlazo(void *args)
 
         log_info(logger, "## (%d) Enviado a CPU %d", p->pid, cpu_libre->id_cpu);
 
-        // Cambiar estado del proceso (agregar esta función después)
-        // cambiar_estado_proceso(p->pid, EXEC);
+        // si es RR, lanzar el timer
+        if (strcmp(algoritmo, "RR") == 0)
+        {
+            pthread_mutex_lock(&mutex_quantum);
+            quantum_activo = true;
+            pthread_mutex_unlock(&mutex_quantum);
+
+            t_args_quantum *args_q = malloc(sizeof(t_args_quantum));
+            args_q->cpu = cpu_libre;
+            args_q->pid = p->pid;
+
+            pthread_t hilo_q;
+            pthread_create(&hilo_q, NULL, HiloQuantum, args_q);
+            pthread_detach(hilo_q);
+        }
     }
 }
 
@@ -442,7 +631,7 @@ void IniciarProceso(int tamanio, char *codigo)
     proc_inicial->estado = NEW;
 
     pthread_mutex_lock(&mutex_procesos);
-    list_add(lista_procesos, p);
+    list_add(lista_procesos, proc_inicial);
     pthread_mutex_unlock(&mutex_procesos);
 
     // Agregarlo a NEW
@@ -450,41 +639,82 @@ void IniciarProceso(int tamanio, char *codigo)
     queue_push(cola_new, proc_inicial);
     pthread_mutex_unlock(&mutex_new);
 
-    log_info(logger, "## (%d) Se crea el proceso - Estado: NEW", p->pid);
+    log_info(logger, "## (%d) Se crea el proceso - Estado: NEW", proc_inicial->pid);
 
     sem_post(&sem_new); // despertar al planificador de largo plazo
 }
 
-char* NombreEstado(t_estado estado) {
-    switch(estado) {
-        case NEW:        return "NEW";
-        case READY:      return "READY";
-        case EXEC:       return "EXEC";
-        case BLOCK:      return "BLOCK";
-        case SUSP_BLOCK: return "SUSP. BLOCK";
-        case SUSP_READY: return "SUSP. READY";
-        case EXIT:       return "EXIT";
-        default:         return "DESCONOCIDO";
+char *NombreEstado(t_estado estado)
+{
+    switch (estado)
+    {
+    case NEW:
+        return "NEW";
+    case READY:
+        return "READY";
+    case EXEC:
+        return "EXEC";
+    case BLOCK:
+        return "BLOCK";
+    case SUSP_BLOCK:
+        return "SUSP. BLOCK";
+    case SUSP_READY:
+        return "SUSP. READY";
+    case EXIT:
+        return "EXIT";
+    default:
+        return "DESCONOCIDO";
     }
 }
 
-void CambiarEstado(proceso* p, t_estado nuevo_estado) {
+void CambiarEstado(proceso *p, t_estado nuevo_estado)
+{
     log_info(logger, "## (%d) Pasa del estado %s al estado %s", p->pid, NombreEstado(p->estado), NombreEstado(nuevo_estado));
     p->estado = nuevo_estado;
 }
 
-proceso* BuscarProceso(int pid) {
+proceso *BuscarProceso(int pid)
+{
     pthread_mutex_lock(&mutex_procesos);
-    proceso* resultado = NULL;
-    for (int i = 0; i < list_size(lista_procesos); i++) {
-        proceso* p = list_get(lista_procesos, i);
-        if (p->pid == pid) {
+    proceso *resultado = NULL;
+    for (int i = 0; i < list_size(lista_procesos); i++)
+    {
+        proceso *p = list_get(lista_procesos, i);
+        if (p->pid == pid)
+        {
             resultado = p;
             break;
         }
     }
     pthread_mutex_unlock(&mutex_procesos);
     return resultado;
+}
+
+void *HiloQuantum(void *args)
+{
+    t_args_quantum *datos = (t_args_quantum *)args;
+    t_cpu_conectada *cpu = datos->cpu;
+    int pid = datos->pid;
+    free(datos);
+
+    // esperar el quantum en microsegundos
+    usleep(rr_quantum * 1000);
+
+    pthread_mutex_lock(&mutex_quantum);
+    if (!quantum_activo || cpu->pid_actual != pid)
+    {
+        // el proceso ya terminó o fue desalojado antes, no hacer nada
+        pthread_mutex_unlock(&mutex_quantum);
+        return NULL;
+    }
+    quantum_activo = false;
+    pthread_mutex_unlock(&mutex_quantum);
+
+    // mandar interrupción a la CPU
+    log_info(logger, "## (%d) - Desalojado por fin de quantum", pid);
+    EnviarOpCode(cpu->socket, DESCONEXION); // op code de interrupción por quantum
+
+    return NULL;
 }
 
 int main(int argc, char *argv[])
@@ -517,6 +747,9 @@ int main(int argc, char *argv[])
     // Inicializar colas
     cola_new = queue_create();
     cola_ready = queue_create();
+    cola_block = queue_create();
+    cola_susp_block = queue_create();
+    cola_susp_ready = queue_create();
 
     // Iniciar servidor multihilo
     IniciarServidorMultihilo();
