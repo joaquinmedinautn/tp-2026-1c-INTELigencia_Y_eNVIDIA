@@ -12,6 +12,7 @@
 #include <pthread.h>
 #include <commons/collections/queue.h>
 #include <semaphore.h>
+#include <stdint.h>
 
 typedef enum
 {
@@ -66,6 +67,20 @@ typedef enum{
     SOLICITUD_INTRUCCION, //fetch
     FINALIZAR_PROCESO, //libero memoria
 } op_code;
+
+typedef struct {
+    uint32_t PC;
+    uint32_t EAX;
+    uint32_t EBX;
+    uint32_t ECX;
+    uint32_t EDX;
+    uint32_t SI;
+    uint32_t DI;
+    uint8_t AX;
+    uint8_t BX;
+    uint8_t CX;
+    uint8_t DX;
+} t_contexto;
 
 
 void saludar(char* quien);
