@@ -3,6 +3,12 @@
 
 #include <utils/utils.h>
 
+typedef struct {
+    char* nombre;
+    char* params[4];
+    int cant_params;
+} t_instruccion;
+
 // Contexto del proceso que está ejecutando la CPU ahora mismo
 extern t_contexto contexto;
 extern int pid_actual;
@@ -12,7 +18,7 @@ extern t_log* logger;
 
 // Etapas del ciclo
 char* fetch();
-void decode_execute(char* instruccion);
+t_instruccion* decode(char* instruccion);;
 int check_interrupt();
 
 // El loop principal

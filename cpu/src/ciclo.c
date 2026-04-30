@@ -22,3 +22,24 @@ char* fetch() {
 
     return instruccion;
 }
+
+t_instruccion* decode(char* instruccion) {
+    t_instruccion* inst = malloc(sizeof(t_instruccion));
+    inst->cant_params = 0;
+
+    // Separamos el string por espacios
+    char* token = strtok(instruccion, " ");
+    inst->nombre = token;
+
+    // Los siguientes tokens son los parámetros
+    token = strtok(NULL, " ");
+    while (token != NULL && inst->cant_params < 4) {
+        inst->params[inst->cant_params] = token;
+        inst->cant_params++;
+        token = strtok(NULL, " ");
+    }
+
+    log_info(logger, "## PID: %d - Ejecutando: %s", pid_actual, inst->nombre);
+
+    return inst;
+}
