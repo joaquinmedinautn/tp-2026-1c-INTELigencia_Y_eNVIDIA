@@ -114,6 +114,20 @@ int check_interrupt() {
     return resultado;
 }
 
+void* escuchar_interrupciones(void* arg) {
+    while (1) {
+        int operacion = RecibirOperacion(socket_kernel_scheduler);
+        if (operacion == DESCONEXION) {
+            break;
+        }
+        // Llegó una interrupción
+        pthread_mutex_lock(&mutex_interrupcion);
+        hay_interrupcion = 1;
+        pthread_mutex_unlock(&mutex_interrupcion);
+    }
+    return NULL;
+}
+
 void iniciar_ciclo(int pid) {
     pid_actual = pid;
 
@@ -128,6 +142,10 @@ void iniciar_ciclo(int pid) {
     void* buffer = RecibirBuffer(&size, socket_kernel_memory);
     memcpy(&contexto, buffer, sizeof(t_contexto));
     free(buffer);
+
+    pthread_t hilo_interrupciones;
+pthread_create(&hilo_interrupciones, NULL, escuchar_interrupciones, NULL);
+pthread_detach(hilo_interrupciones);
 
     // Loop principal
     while (1) {
