@@ -151,6 +151,21 @@ void atender_cliente(void* void_socket) {
                 EliminarPaquete(res);
                 break;
             }
+            case FINALIZAR_PROCESO:{
+                    t_list* valores =  RecibirPaquete(socket_cliente);
+                    uint32_t pid = *(uint32_t*) list_get(valores, 0);
+                    char* key = string_itoa(pid);
+
+                    pthread_mutex_lock(&mutex_procesos);
+                    dictionary_destroy_and_destroy_elements(procesos, key, eliminar_contexto);
+                    pthread_mutex_unlock(&mutex_procesos);
+
+                    log_info(logger, "## PID: %d - Proceso Finalizado (Memodia liberada)", pid);
+
+                    free(key);
+                    list_destroy_and_destroy_elements(valores,free);
+                    break;
+            }
             default:
                 log_warning(logger, "Operación desconocida");
                 break;
@@ -188,8 +203,8 @@ int main(int argc, char *argv[])
         }
     }
 
-    dictionary_destroy(procesos);
-    pthread_mutex_destroy(&mx_procesos);
+    dictionary_destroy_and_destroy_elements(procesos, eliminar_contexto);
+    pthread_mutex_destroy(&mutex_procesos);
     free(scripts_path);
     log_destroy(logger);
 

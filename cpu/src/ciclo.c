@@ -39,7 +39,7 @@ void asignar_valor_registro(char* nombre, uint32_t valor) {
 char* fetch() {
     // Le pedimos la instrucción al Kernel Memory
     // Le mandamos el PID y el PC actual
-    t_paquete* paquete = CrearPaquete(SOLICITUD_INTRUCCION);
+    t_paquete* paquete = CrearPaquete(SOLICITUD_INSTRUCCION);
     AgregarAPaquete(paquete, &pid_actual, sizeof(int));
     AgregarAPaquete(paquete, &contexto.PC, sizeof(uint32_t));
     EnviarPaquete(paquete, socket_kernel_memory);

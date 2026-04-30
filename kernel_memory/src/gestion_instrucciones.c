@@ -2,7 +2,7 @@
 
 
 extern t_dictionary* procesos;
-extern pthread_mutex_t mx_procesos;
+extern pthread_mutex_t mutex_procesos;
 extern char* scripts_path; // SCRIPTS_BASEPATH del config 
 
 void cargar_instrucciones(uint32_t pid, char* path_relativo) {
@@ -37,9 +37,9 @@ void cargar_instrucciones(uint32_t pid, char* path_relativo) {
 
     // 4. guardo en el diccionario global (protegido con mutex) 
     char* key = string_itoa(pid);
-    pthread_mutex_lock(&mx_procesos);
+    pthread_mutex_lock(&mutex_procesos);
     dictionary_put(procesos, key, contexto);
-    pthread_mutex_unlock(&mx_procesos);
+    pthread_mutex_unlock(&mutex_procesos);
 
     // Limpieza de memoria temporal
     free(linea);
@@ -51,7 +51,7 @@ void cargar_instrucciones(uint32_t pid, char* path_relativo) {
 char* obtener_instruccion(uint32_t pid, uint32_t pc) {
     char* key = string_itoa(pid);
     
-    pthread_mutex_lock(&mx_procesos);
+    pthread_mutex_lock(&mutex_procesos);
     t_contexto* ctx = dictionary_get(procesos, key);
     
     // el PC es el índice de nuestra lista 
@@ -59,8 +59,17 @@ char* obtener_instruccion(uint32_t pid, uint32_t pc) {
     if (ctx != NULL && pc < list_size(ctx->instrucciones)) {
         instruccion = list_get(ctx->instrucciones, pc);
     }
-    pthread_mutex_unlock(&mx_procesos);
+    pthread_mutex_unlock(&mutex_procesos);
     
     free(key);
     return instruccion;
+}
+void eliminar_contexto(void* contexto_void){
+    t_contexto* contexto = (t_contexto*)contexto_void;
+
+    //libero cada string, instruccion, dentro de la lista
+    //uso esta funcion pq cada linea es un string duplicate
+    list_destroy_and_destroy_elements(contexto-> instrucciones, free);
+
+    free(contexto);
 }

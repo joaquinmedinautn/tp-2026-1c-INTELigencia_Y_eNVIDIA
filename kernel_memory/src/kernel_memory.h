@@ -17,6 +17,7 @@ typedef struct{
 void atender_cliente(void* void_socket); 
 void cargar_instrucciones(uint32_t pid, char* path_relativo);
 char* obtener_instruccion(uint32_t pid, uint32_t pc);
+void eliminar_contexto(void* contexto_void);
 
 
 extern t_log* logger; 
