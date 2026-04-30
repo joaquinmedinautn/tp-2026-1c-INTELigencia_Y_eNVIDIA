@@ -1,0 +1,21 @@
+#ifndef CICLO_H
+#define CICLO_H
+
+#include <utils/utils.h>
+
+// Contexto del proceso que está ejecutando la CPU ahora mismo
+extern t_contexto contexto;
+extern int pid_actual;
+extern int socket_kernel_memory;
+extern int socket_kernel_scheduler;
+extern t_log* logger;
+
+// Etapas del ciclo
+char* fetch();
+void decode_execute(char* instruccion);
+int check_interrupt();
+
+// El loop principal
+void iniciar_ciclo(int pid);
+
+#endif
