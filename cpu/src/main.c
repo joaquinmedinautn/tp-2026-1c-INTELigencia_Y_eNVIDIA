@@ -31,10 +31,16 @@ int main(int argc, char *argv[])
     EnviarOpCode(socket_memory_stick, CPU_A_MEMORY_STICK);
 
 
-    while (1)
-    {
-        sleep(10);
-    }
+   while (1) {
+    // Esperamos un PID del Scheduler
+    int size;
+    void* buffer = RecibirBuffer(&size, socket_kernel_scheduler);
+    int pid = *(int*)buffer;
+    free(buffer);
+    
+    // Arrancamos el ciclo con ese PID
+    iniciar_ciclo(pid);
+}
 
     return 0;
 }
