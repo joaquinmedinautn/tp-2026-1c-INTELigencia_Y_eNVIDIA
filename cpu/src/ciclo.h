@@ -15,6 +15,8 @@ extern int pid_actual;
 extern int socket_kernel_memory;
 extern int socket_kernel_scheduler;
 extern t_log* logger;
+extern int hay_interrupcion;
+extern pthread_mutex_t mutex_interrupcion;
 
 uint32_t obtener_valor_registro(char* nombre);
 void asignar_valor_registro(char* nombre, uint32_t valor);

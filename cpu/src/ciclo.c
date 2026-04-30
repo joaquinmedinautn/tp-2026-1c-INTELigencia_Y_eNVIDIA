@@ -4,6 +4,8 @@
 
 t_contexto contexto;
 int pid_actual;
+extern int hay_interrupcion;
+extern pthread_mutex_t mutex_interrupcion;
 
 uint32_t obtener_valor_registro(char* nombre) {
     if (strcmp(nombre, "PC") == 0)  return contexto.PC;
@@ -99,4 +101,52 @@ int execute(t_instruccion* inst) {
         }
     }
 return 0;  // PC no fue modificado
+}
+
+int hay_interrupcion = 0;
+pthread_mutex_t mutex_interrupcion = PTHREAD_MUTEX_INITIALIZER;
+
+int check_interrupt() {
+    pthread_mutex_lock(&mutex_interrupcion);
+    int resultado = hay_interrupcion;
+    hay_interrupcion = 0;
+    pthread_mutex_unlock(&mutex_interrupcion);
+    return resultado;
+}
+
+void iniciar_ciclo(int pid) {
+    pid_actual = pid;
+
+    // Pedimos el contexto al Kernel Memory
+    t_paquete* paquete = CrearPaquete(SOLICITUD_INTRUCCION);
+    AgregarAPaquete(paquete, &pid_actual, sizeof(int));
+    EnviarPaquete(paquete, socket_kernel_memory);
+    EliminarPaquete(paquete);
+
+    // Recibimos el contexto
+    int size;
+    void* buffer = RecibirBuffer(&size, socket_kernel_memory);
+    memcpy(&contexto, buffer, sizeof(t_contexto));
+    free(buffer);
+
+    // Loop principal
+    while (1) {
+        char* instruccion = fetch();
+        t_instruccion* inst = decode(instruccion);
+        int pc_modificado = execute(inst);
+        
+        if (pc_modificado == 0) {
+            contexto.PC++;
+        }
+
+        free(inst);
+        free(instruccion);
+
+        if (check_interrupt()) {
+            // Guardamos contexto y devolvemos PID al Scheduler
+            log_info(logger, "## Interrupcion recibida");
+            // TODO: enviar contexto al Kernel Memory y PID al Scheduler
+            break;
+        }
+    }
 }
