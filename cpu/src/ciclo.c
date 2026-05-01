@@ -99,6 +99,14 @@ int execute(t_instruccion* inst) {
         contexto.PC = atoi(inst->params[1]);
         return 1;  // PC modificado, no sumar 1
         }
+    } else if (strcmp(inst->nombre, "EXIT") == 0) {
+    t_paquete* paquete = CrearPaquete(CPU_PID_DEVUELTO);
+    AgregarAPaquete(paquete, &pid_actual, sizeof(int));
+    char* motivo = "EXIT";
+    AgregarAPaquete(paquete, motivo, strlen(motivo) + 1);
+    EnviarPaquete(paquete, socket_kernel_scheduler);
+    EliminarPaquete(paquete);
+    return 2;
     }
 return 0;  // PC no fue modificado
 }
@@ -152,9 +160,11 @@ pthread_detach(hilo_interrupciones);
         char* instruccion = fetch();
         t_instruccion* inst = decode(instruccion);
         int pc_modificado = execute(inst);
-        
-        if (pc_modificado == 0) {
-            contexto.PC++;
+
+        if (pc_modificado == 2) {
+        break;  // EXIT
+        } else if (pc_modificado == 0) {
+        contexto.PC++;
         }
 
         free(inst);
