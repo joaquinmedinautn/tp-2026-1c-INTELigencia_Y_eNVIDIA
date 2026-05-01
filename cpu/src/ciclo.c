@@ -107,7 +107,102 @@ int execute(t_instruccion* inst) {
     EnviarPaquete(paquete, socket_kernel_scheduler);
     EliminarPaquete(paquete);
     return 2;
+    } 
+    
+    else if (strcmp(inst->nombre, "SLEEP") == 0) {
+    int tiempo = atoi(inst->params[0]);
+    t_paquete* paquete = CrearPaquete(CPU_SYSCALL);
+    AgregarAPaquete(paquete, &pid_actual, sizeof(int));
+    AgregarAPaquete(paquete, &tiempo, sizeof(int));
+    EnviarPaquete(paquete, socket_kernel_scheduler);
+    EliminarPaquete(paquete);
+    return 2;
     }
+    
+    else if (strcmp(inst->nombre, "INIT_PROC") == 0) {
+    int prioridad = atoi(inst->params[1]);
+    t_paquete* paquete = CrearPaquete(CPU_SYSCALL);
+    AgregarAPaquete(paquete, &pid_actual, sizeof(int));
+    AgregarAPaquete(paquete, inst->params[0], strlen(inst->params[0]) + 1);
+    AgregarAPaquete(paquete, &prioridad, sizeof(int));
+    EnviarPaquete(paquete, socket_kernel_scheduler);
+    EliminarPaquete(paquete);
+    return 0;
+    }
+
+    else if (strcmp(inst->nombre, "MEM_ALLOC") == 0) {
+    int id_segmento = atoi(inst->params[0]);
+    int tamanio = atoi(inst->params[1]);
+    t_paquete* paquete = CrearPaquete(CPU_SYSCALL);
+    AgregarAPaquete(paquete, &pid_actual, sizeof(int));
+    AgregarAPaquete(paquete, &id_segmento, sizeof(int));
+    AgregarAPaquete(paquete, &tamanio, sizeof(int));
+    EnviarPaquete(paquete, socket_kernel_scheduler);
+    EliminarPaquete(paquete);
+    return 0;
+    }
+
+    else if (strcmp(inst->nombre, "MEM_FREE") == 0) {
+    int id_segmento = atoi(inst->params[0]);
+    t_paquete* paquete = CrearPaquete(CPU_SYSCALL);
+    AgregarAPaquete(paquete, &pid_actual, sizeof(int));
+    AgregarAPaquete(paquete, &id_segmento, sizeof(int));
+    EnviarPaquete(paquete, socket_kernel_scheduler);
+    EliminarPaquete(paquete);
+    return 0;
+    }
+    
+    else if (strcmp(inst->nombre, "MUTEX_CREATE") == 0) {
+    t_paquete* paquete = CrearPaquete(CPU_SYSCALL);
+    AgregarAPaquete(paquete, &pid_actual, sizeof(int));
+    AgregarAPaquete(paquete, inst->params[0], strlen(inst->params[0]) + 1);
+    EnviarPaquete(paquete, socket_kernel_scheduler);
+    EliminarPaquete(paquete);
+    return 0;
+    }
+
+    else if (strcmp(inst->nombre, "MUTEX_LOCK") == 0) {
+    t_paquete* paquete = CrearPaquete(CPU_SYSCALL);
+    AgregarAPaquete(paquete, &pid_actual, sizeof(int));
+    AgregarAPaquete(paquete, inst->params[0], strlen(inst->params[0]) + 1);
+    EnviarPaquete(paquete, socket_kernel_scheduler);
+    EliminarPaquete(paquete);
+    return 2;
+    }
+
+    else if (strcmp(inst->nombre, "MUTEX_UNLOCK") == 0) {
+    t_paquete* paquete = CrearPaquete(CPU_SYSCALL);
+    AgregarAPaquete(paquete, &pid_actual, sizeof(int));
+    AgregarAPaquete(paquete, inst->params[0], strlen(inst->params[0]) + 1);
+    EnviarPaquete(paquete, socket_kernel_scheduler);
+    EliminarPaquete(paquete);
+    return 0;
+    }
+
+    else if (strcmp(inst->nombre, "STDIN") == 0) {
+    uint32_t dir_logica = obtener_valor_registro(inst->params[0]);
+    uint32_t tamanio = obtener_valor_registro(inst->params[1]);
+    t_paquete* paquete = CrearPaquete(CPU_SYSCALL);
+    AgregarAPaquete(paquete, &pid_actual, sizeof(int));
+    AgregarAPaquete(paquete, &dir_logica, sizeof(uint32_t));
+    AgregarAPaquete(paquete, &tamanio, sizeof(uint32_t));
+    EnviarPaquete(paquete, socket_kernel_scheduler);
+    EliminarPaquete(paquete);
+    return 2;
+    }   
+    
+    else if (strcmp(inst->nombre, "STDOUT") == 0) {
+    uint32_t dir_logica = obtener_valor_registro(inst->params[0]);
+    uint32_t tamanio = obtener_valor_registro(inst->params[1]);
+    t_paquete* paquete = CrearPaquete(CPU_SYSCALL);
+    AgregarAPaquete(paquete, &pid_actual, sizeof(int));
+    AgregarAPaquete(paquete, &dir_logica, sizeof(uint32_t));
+    AgregarAPaquete(paquete, &tamanio, sizeof(uint32_t));
+    EnviarPaquete(paquete, socket_kernel_scheduler);
+    EliminarPaquete(paquete);
+    return 2;
+}
+
 return 0;  // PC no fue modificado
 }
 
