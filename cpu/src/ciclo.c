@@ -132,7 +132,7 @@ void iniciar_ciclo(int pid) {
     pid_actual = pid;
 
     // Pedimos el contexto al Kernel Memory
-    t_paquete* paquete = CrearPaquete(SOLICITUD_INTRUCCION);
+    t_paquete* paquete = CrearPaquete(SOLICITUD_INSTRUCCION);
     AgregarAPaquete(paquete, &pid_actual, sizeof(int));
     EnviarPaquete(paquete, socket_kernel_memory);
     EliminarPaquete(paquete);

@@ -65,7 +65,7 @@ typedef struct
 typedef enum{
 
     CREAR_PROCESO, //preparacion
-    SOLICITUD_INTRUCCION, //fetch
+    SOLICITUD_INSTRUCCION, //fetch
     FINALIZAR_PROCESO, //libero memoria
 } op_code;
 
