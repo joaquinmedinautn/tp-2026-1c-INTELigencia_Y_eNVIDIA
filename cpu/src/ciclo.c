@@ -266,10 +266,24 @@ pthread_detach(hilo_interrupciones);
         free(instruccion);
 
         if (check_interrupt()) {
-            // Guardamos contexto y devolvemos PID al Scheduler
-            log_info(logger, "## Interrupcion recibida");
-            // TODO: enviar contexto al Kernel Memory y PID al Scheduler
-            break;
-        }
+    log_info(logger, "## Interrupcion recibida");
+    
+    // 1. Guardamos el contexto en Kernel Memory
+    t_paquete* paquete = CrearPaquete(CPU_A_KERNEL_MEMORY);
+    AgregarAPaquete(paquete, &pid_actual, sizeof(int));
+    AgregarAPaquete(paquete, &contexto, sizeof(t_contexto));
+    EnviarPaquete(paquete, socket_kernel_memory);
+    EliminarPaquete(paquete);
+
+    // 2. Devolvemos el PID al Scheduler con motivo INTERRUPCION
+    t_paquete* paquete2 = CrearPaquete(CPU_PID_DEVUELTO);
+    AgregarAPaquete(paquete2, &pid_actual, sizeof(int));
+    char* motivo = "INTERRUPCION";
+    AgregarAPaquete(paquete2, motivo, strlen(motivo) + 1);
+    EnviarPaquete(paquete2, socket_kernel_scheduler);
+    EliminarPaquete(paquete2);
+    
+    break;
+}
     }
 }
