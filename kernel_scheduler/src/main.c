@@ -198,8 +198,6 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
         // no bloquea
         char nombre_mutex[50];
         recv(cpu->socket, nombre_mutex, sizeof(nombre_mutex), MSG_WAITALL);
-        char nombre_mutex[50];
-        recv(cpu->socket, nombre_mutex, sizeof(nombre_mutex), MSG_WAITALL);
 
         t_mutex_proceso *m = BuscarMutex(nombre_mutex);
         if (m == NULL)
@@ -429,7 +427,7 @@ void RegistrarIO(int socket_cliente)
     // Crear estructura
     t_io_conectado *io = malloc(sizeof(t_io_conectado));
     io->socket = socket_cliente;
-    strncpy(io->tipo_io, tipo_io);
+    strncpy(io->tipo_io, tipo_io, sizeof(io->tipo_io));
 
     // Agregar a la lista global
     pthread_mutex_lock(&mutex_ios);

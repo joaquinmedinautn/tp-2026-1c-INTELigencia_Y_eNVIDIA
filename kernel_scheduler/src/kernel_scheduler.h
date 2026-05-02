@@ -70,5 +70,6 @@ proceso* BuscarProceso(int pid);
 void EjecutarBSOD();
 void *EscucharKernelMemory(void* args);
 void *HiloQuantum(void *args);
+t_mutex_proceso *BuscarMutex(char *nombre);
 
 #endif
