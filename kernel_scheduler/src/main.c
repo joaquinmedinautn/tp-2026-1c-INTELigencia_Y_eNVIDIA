@@ -31,9 +31,11 @@ pthread_mutex_t mutex_block;
 pthread_mutex_t mutex_susp;
 pthread_mutex_t mutex_kernel_memory;
 pthread_mutex_t mutex_quantum;
+pthread_mutex_t mutex_lista_mutex;
 t_list *lista_cpus;
 t_list *lista_ios;
 t_list *lista_procesos;
+t_list *lista_mutex;
 
 void ObtenerConfig(char *archivo_config)
 {
@@ -60,6 +62,7 @@ void IniciarSemaforos()
     pthread_mutex_init(&mutex_block, NULL);
     pthread_mutex_init(&mutex_susp, NULL);
     pthread_mutex_init(&mutex_kernel_memory, NULL);
+    pthread_mutex_init(&mutex_lista_mutex, NULL);
 }
 
 // Procesar una syscall de la CPU
@@ -73,46 +76,173 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
     log_info(logger, "## (%d) - Solicitó syscall: %s", pid, syscall_nombre);
 
     proceso *p = BuscarProceso(pid);
-    CambiarEstado(p, BLOCK);
-
-    pthread_mutex_lock(&mutex_block);
-    queue_push(cola_block, p);
-    pthread_mutex_unlock(&mutex_block);
 
     if (strcmp(syscall_nombre, "SLEEP") == 0)
     {
+        CambiarEstado(p, BLOCK);
+        pthread_mutex_lock(&mutex_block);
+        queue_push(cola_block, p);
+        pthread_mutex_unlock(&mutex_block);
         int tiempo;
         recv(cpu->socket, &tiempo, sizeof(int), MSG_WAITALL);
         EnviarAIO("SLEEP", IO_SLEEP, pid, &tiempo);
+        cpu->ocupado = false;
+        cpu->pid_actual = -1;
+        sem_post(&sem_cpu_disponible);
     }
     else if (strcmp(syscall_nombre, "STDIN") == 0)
     {
+        CambiarEstado(p, BLOCK);
+        pthread_mutex_lock(&mutex_block);
+        queue_push(cola_block, p);
+        pthread_mutex_unlock(&mutex_block);
         int direccion_logica, tamanio;
         recv(cpu->socket, &direccion_logica, sizeof(int), MSG_WAITALL);
         recv(cpu->socket, &tamanio, sizeof(int), MSG_WAITALL);
-
         p->dir_logica_io = direccion_logica;
         p->tamanio_io = tamanio;
-
-        int params[2] = {tamanio};
+        int params[1] = {tamanio};
         EnviarAIO("STDIN", IO_STDIN_READ, pid, params);
+        cpu->ocupado = false;
+        cpu->pid_actual = -1;
+        sem_post(&sem_cpu_disponible);
     }
     else if (strcmp(syscall_nombre, "STDOUT") == 0)
     {
+        CambiarEstado(p, BLOCK);
+        pthread_mutex_lock(&mutex_block);
+        queue_push(cola_block, p);
+        pthread_mutex_unlock(&mutex_block);
         int direccion_logica, tamanio;
         recv(cpu->socket, &direccion_logica, sizeof(int), MSG_WAITALL);
         recv(cpu->socket, &tamanio, sizeof(int), MSG_WAITALL);
-
         p->dir_logica_io = direccion_logica;
         p->tamanio_io = tamanio;
-
         int params[2] = {direccion_logica, tamanio};
         EnviarAIO("STDOUT", IO_STDOUT_WRITE, pid, params);
+        cpu->ocupado = false;
+        cpu->pid_actual = -1;
+        sem_post(&sem_cpu_disponible);
     }
+    else if (strcmp(syscall_nombre, "MUTEX_CREATE") == 0)
+    {
+        // no bloquea
+        char nombre_mutex[50];
+        recv(cpu->socket, nombre_mutex, sizeof(nombre_mutex), MSG_WAITALL);
 
-    cpu->ocupado = false;
-    cpu->pid_actual = -1;
-    sem_post(&sem_cpu_disponible);
+        // solo crear si no existe
+        t_mutex_proceso *m = BuscarMutex(nombre_mutex);
+        if (m == NULL)
+        {
+            m = malloc(sizeof(t_mutex_proceso));
+            strcpy(m->nombre, nombre_mutex);
+            m->pid_dueño = -1;
+            m->cola_espera = queue_create();
+
+            pthread_mutex_lock(&mutex_lista_mutex);
+            list_add(lista_mutex, m);
+            pthread_mutex_unlock(&mutex_lista_mutex);
+        }
+
+        // el proceso NO pasa a BLOCK, sigue ejecutando
+        // cancelar el CambiarEstado(p, BLOCK) que hiciste arriba
+        CambiarEstado(p, EXEC);
+        pthread_mutex_lock(&mutex_block);
+        queue_pop(cola_block); // sacarlo de BLOCK porque no se bloquea
+        pthread_mutex_unlock(&mutex_block);
+
+        cpu->ocupado = true;
+        cpu->pid_actual = p->pid;
+        // no liberar la CPU
+    }
+    else if (strcmp(syscall_nombre, "MUTEX_LOCK") == 0)
+    {
+        // bloquea solo si el mutex está tomado
+        char nombre_mutex[50];
+        recv(cpu->socket, nombre_mutex, sizeof(nombre_mutex), MSG_WAITALL);
+        
+        t_mutex_proceso *m = BuscarMutex(nombre_mutex);
+        if (m == NULL)
+        {
+            log_error(logger, "Mutex %s no existe", nombre_mutex);
+            return;
+        }
+
+        if (m->pid_dueño == -1)
+        {
+            // mutex libre, el proceso lo toma y sigue ejecutando
+            m->pid_dueño = pid;
+            log_info(logger, "## (%d) Toma el Mutex %s", pid, nombre_mutex);
+
+            CambiarEstado(p, EXEC);
+            pthread_mutex_lock(&mutex_block);
+            queue_pop(cola_block);
+            pthread_mutex_unlock(&mutex_block);
+
+            cpu->ocupado = true;
+            cpu->pid_actual = p->pid;
+        }
+        else
+        {
+            // mutex tomado, el proceso queda en BLOCK esperando
+            log_info(logger, "## (%d) queda bloqueado esperando Mutex %s", pid, nombre_mutex);
+            queue_push(m->cola_espera, p);
+            // el proceso ya está en BLOCK, la CPU queda libre
+            cpu->ocupado = false;
+            cpu->pid_actual = -1;
+            sem_post(&sem_cpu_disponible);
+        }
+    }
+    else if (strcmp(syscall_nombre, "MUTEX_UNLOCK") == 0)
+    {
+        // no bloquea
+        char nombre_mutex[50];
+        recv(cpu->socket, nombre_mutex, sizeof(nombre_mutex), MSG_WAITALL);
+        char nombre_mutex[50];
+        recv(cpu->socket, nombre_mutex, sizeof(nombre_mutex), MSG_WAITALL);
+
+        t_mutex_proceso *m = BuscarMutex(nombre_mutex);
+        if (m == NULL)
+        {
+            log_error(logger, "Mutex %s no existe", nombre_mutex);
+            return;
+        }
+
+        log_info(logger, "## (%d) Libera el Mutex %s", pid, nombre_mutex);
+
+        if (!queue_is_empty(m->cola_espera))
+        {
+            // hay procesos esperando, el primero toma el mutex
+            proceso *siguiente = queue_pop(m->cola_espera);
+            m->pid_dueño = siguiente->pid;
+            log_info(logger, "## (%d) Toma el Mutex %s", siguiente->pid, nombre_mutex);
+
+            CambiarEstado(siguiente, READY);
+            pthread_mutex_lock(&mutex_block);
+            list_remove_element(cola_block->elements, siguiente);
+            pthread_mutex_unlock(&mutex_block);
+
+            pthread_mutex_lock(&mutex_ready);
+            queue_push(cola_ready, siguiente);
+            pthread_mutex_unlock(&mutex_ready);
+
+            sem_post(&sem_ready);
+        }
+        else
+        {
+            // nadie esperando, el mutex queda libre
+            m->pid_dueño = -1;
+        }
+
+        // el proceso que hizo unlock sigue ejecutando
+        CambiarEstado(p, EXEC);
+        pthread_mutex_lock(&mutex_block);
+        queue_pop(cola_block);
+        pthread_mutex_unlock(&mutex_block);
+
+        cpu->ocupado = true;
+        cpu->pid_actual = p->pid;
+    }
 }
 
 void EnviarAIO(char *tipo_buscado, int operacion, int pid, void *params)
@@ -299,7 +429,7 @@ void RegistrarIO(int socket_cliente)
     // Crear estructura
     t_io_conectado *io = malloc(sizeof(t_io_conectado));
     io->socket = socket_cliente;
-    strcpy(io->tipo_io, tipo_io);
+    strncpy(io->tipo_io, tipo_io);
 
     // Agregar a la lista global
     pthread_mutex_lock(&mutex_ios);
@@ -717,6 +847,23 @@ void *HiloQuantum(void *args)
     return NULL;
 }
 
+t_mutex_proceso *BuscarMutex(char *nombre)
+{
+    pthread_mutex_lock(&mutex_lista_mutex);
+    t_mutex_proceso *resultado = NULL;
+    for (int i = 0; i < list_size(lista_mutex); i++)
+    {
+        t_mutex_proceso *m = list_get(lista_mutex, i);
+        if (strcmp(m->nombre, nombre) == 0)
+        {
+            resultado = m;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&mutex_lista_mutex);
+    return resultado;
+}
+
 int main(int argc, char *argv[])
 {
 
@@ -732,6 +879,7 @@ int main(int argc, char *argv[])
     lista_cpus = list_create();
     lista_ios = list_create();
     lista_procesos = list_create();
+    lista_mutex = list_create();
 
     IniciarSemaforos();
     saludar("kernel_scheduler");

@@ -43,6 +43,12 @@ typedef struct {
     int pid;
 } t_args_quantum;
 
+typedef struct {
+    char nombre[50];
+    int pid_dueño;      // -1 si está libre
+    t_queue* cola_espera;  // procesos esperando
+} t_mutex_proceso;
+
 void IniciarSemaforos();
 void ObtenerConfig();
 void IniciarServidorMultihilo();
