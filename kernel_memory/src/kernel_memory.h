@@ -6,7 +6,7 @@
 void ObtenerConfig();
 
 typedef struct{
-    t_list* intrucciones;
+    t_list* instrucciones;
 
     uint32_t PC;
     uint8_t AX, BX, CX, DX;
@@ -22,7 +22,7 @@ void eliminar_contexto(void* contexto_void);
 
 extern t_log* logger; 
 extern t_dictionary* procesos;
-extern pthread_mutex_t mx_procesos;
+extern pthread_mutex_t mutex_procesos;
 extern int instruction_delay; 
 extern char* scripts_path; 
 

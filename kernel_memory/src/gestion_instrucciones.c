@@ -31,9 +31,12 @@ void cargar_instrucciones(uint32_t pid, char* path_relativo) {
     size_t tam = 0;
     while (getline(&linea, &tam, archivo) != -1) {
         // saco el \n del final para que no rompa los logs 
-        linea[strcspn(linea, "\n")] = '\0';
+        linea[strcspn(linea, "\r\n")] = '\0';
+        if (strlen(linea) > 0){
         list_add(contexto->instrucciones, string_duplicate(linea));
+        }    
     }
+
 
     // 4. guardo en el diccionario global (protegido con mutex) 
     char* key = string_itoa(pid);
@@ -50,14 +53,17 @@ void cargar_instrucciones(uint32_t pid, char* path_relativo) {
 
 char* obtener_instruccion(uint32_t pid, uint32_t pc) {
     char* key = string_itoa(pid);
+    char* instruccion = NULL;
     
     pthread_mutex_lock(&mutex_procesos);
     t_contexto* ctx = dictionary_get(procesos, key);
     
     // el PC es el índice de nuestra lista 
-    char* instruccion = NULL;
-    if (ctx != NULL && pc < list_size(ctx->instrucciones)) {
+
+    if (ctx != NULL){
+        if (pc < list_size(ctx->instrucciones)) {
         instruccion = list_get(ctx->instrucciones, pc);
+     } else { instruccion = "EXIT"
     }
     pthread_mutex_unlock(&mutex_procesos);
     

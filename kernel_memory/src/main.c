@@ -26,9 +26,12 @@ void ObtenerConfig() {
     }
     puerto_escucha = config_get_int_value(config, "PUERTO_ESCUCHA");
     instruction_delay = config_get_int_value(config, "INTRUCTION_DELAY");
+    
     scripts_path = string_duplicate(config_get_string_value(config, "SCRIPTS_BASEPATH"));
 
     char* log_level_str = config_get_string_value(config, "LOG_LEVEL");
+    log_level = log_level_from_string(log_level_str);
+
     logger = log_create("kernel_memory.log", "KERNEL_MEMORY", true, log_level);
 
     config_destroy(config);
@@ -45,16 +48,15 @@ void atender_cliente(void* void_socket) {
     
     switch (cod_op) {
         case KERNEL_SCHEDULER:
+            socket_kernel_scheduler = socket_cliente;
             log_info(logger, "## Kernel Scheduler Conectado");
             break;
         case CPU_A_KERNEL_MEMORY:
+            socket_cpu = socket_cliente;
             log_info(logger, "## CPU Conectada");
             break;
-        case CPU_A_KERNEL_MEMORY:
-            socket_cpu = socket_misterioso;
-            break;
         case SWAP:
-            socket_swap = socket_misterioso;
+            socket_swap = socket_cliente;
             break;
         default:
             log_error(logger, "Código de operación desconocido al iniciar");
@@ -90,8 +92,14 @@ void atender_cliente(void* void_socket) {
                 uint32_t pid = *(uint32_t*)list_get(valores, 0);
                 uint32_t pc = *(uint32_t*)list_get(valores, 1);
 
+                pthread_mutex_lock(&mutex_procesos);
                 char* instruccion = obtener_instruccion(pid, pc); 
+                pthread_mutex_unlock(&mutex_procesos);
+
                 usleep(instruction_delay * 1000); // latencia obligatoria
+
+                if (instruccion == NULL) instruccion = "EXIT"; 
+
                 log_info(logger, "## PID: %d %d Instrucción: %s", pid, pc, instruccion); 
 
                 // envio el string a la CPU
@@ -157,7 +165,7 @@ void atender_cliente(void* void_socket) {
                     char* key = string_itoa(pid);
 
                     pthread_mutex_lock(&mutex_procesos);
-                    dictionary_destroy_and_destroy_elements(procesos, key, eliminar_contexto);
+                    dictionary_remove_and_destroy_elements(procesos, key, eliminar_contexto);
                     pthread_mutex_unlock(&mutex_procesos);
 
                     log_info(logger, "## PID: %d - Proceso Finalizado (Memodia liberada)", pid);
