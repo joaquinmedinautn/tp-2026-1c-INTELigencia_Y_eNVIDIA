@@ -21,6 +21,7 @@ void ObtenerConfig() {
 
 int main(int argc, char *argv[])
 {
+    //validacion de argumentos se debe pasar el tipo (STDIN/STDOUT/SLEEP) al ejecutar
 if (argc < 2) {
         fprintf(stderr, "Uso: %s [TIPO (STDIN/STDOUT/SLEEP)]\n", argv[0]);
         return EXIT_FAILURE;
@@ -28,8 +29,10 @@ if (argc < 2) {
 
     char* tipo = argv[1]; // recibe el tipo por parámetro
     ObtenerConfig();
+        //logger obligatorio
     logger = log_create("io.log", "IO", true, log_level);
 
+        //conexion con el scheduler
     socket_kernel_scheduler = CrearConexion(ip_kernel_scheduler, puerto_kernel_scheduler);
     
     // identificación inicial ante el Scheduler
@@ -38,7 +41,9 @@ if (argc < 2) {
 
     log_info(logger, "## Conectado a Kernel Scheduler como %s", tipo);
 
+        //bucle principal: espero ordenes de scheduler indefinidamente
     while (1) {
+        //espera el proximo op code 
         int cod_op = RecibirOperacion(socket_kernel_scheduler);
 
         if (cod_op == -1) {
@@ -48,6 +53,7 @@ if (argc < 2) {
 
         switch (cod_op) {
             case IO_SLEEP: {
+                    //deserializo el PID y el tiempo de espera 
                 t_list* valores = RecibirPaquete(socket_kernel_scheduler);
                 int pid = *(int*)list_get(valores, 0);
                 int tiempo = *(int*)list_get(valores, 1);
@@ -64,6 +70,8 @@ if (argc < 2) {
                 AgregarAPaquete(p, &pid, sizeof(int));
                 EnviarPaquete(p, socket_kernel_scheduler);
                 EliminarPaquete(p);
+
+                // limpieza de la lista recibida para evitar fugas de memoria
                 list_destroy_and_destroy_elements(valores, free);
                 break;
             }
@@ -77,6 +85,7 @@ if (argc < 2) {
                 log_info(logger, "## PID: %d - %s", pid, texto);
                 log_info(logger, "## PID: %d - Fin de IO", pid);
 
+                //confirmo finalizacion 
                 t_paquete* p = CrearPaquete(IO_FINALIZADO);
                 AgregarAPaquete(p, &pid, sizeof(int));
                 EnviarPaquete(p, socket_kernel_scheduler);
@@ -92,14 +101,16 @@ if (argc < 2) {
 
                 log_info(logger, "## PID: %d - Inicio de IO", pid);
                 printf("## PID: %d - Ingrese %d caracteres: ", pid, tam_a_leer);
-                
+
+                //reservo memoria para el ingreso de datos 
                 char* buffer = calloc(1, tam_a_leer + 1);
                 fgets(buffer, tam_a_leer + 1, stdin);
                 buffer[strcspn(buffer, "\n")] = '\0'; // limpiar el enter
 
-                log_info(logger, "## PID: %d - Fin de IO", pid);[cite: 2]
+                log_info(logger, "## PID: %d - Fin de IO", pid);
+                //enviamos el PID y los caracteres leídos.
 
-                // Enviamos los bytes leídos al Scheduler para que los mande a memoria
+                // envio los bytes leídos al Scheduler para que los mande a memoria
                 t_paquete* p = CrearPaquete(IO_FINALIZADO);
                 AgregarAPaquete(p, &pid, sizeof(int));
                 AgregarAPaquete(p, buffer, tam_a_leer);
