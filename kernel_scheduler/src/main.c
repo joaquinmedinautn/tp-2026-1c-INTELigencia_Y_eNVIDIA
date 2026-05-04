@@ -42,10 +42,10 @@ void ObtenerConfig(char *archivo_config)
     config = config_create(archivo_config);
     puerto_escucha = config_get_int_value(config, "PUERTO_ESCUCHA");
     log_level = log_level_from_string(config_get_string_value(config, "LOG_LEVEL"));
-    ip_kernel_memory = config_get_string_value(config, "IP_KERNEL_MEMORY");
+    ip_kernel_memory = strdup(config_get_string_value(config, "IP_KERNEL_MEMORY"));
     puerto_kernel_memory = config_get_int_value(config, "PUERTO_KERNEL_MEMORY");
     rr_quantum = config_get_int_value(config, "RR_QUANTUM");
-    algoritmo = config_get_string_value(config, "ALGORITMO_DE_PLANIFICACION");
+    algoritmo = strdup(config_get_string_value(config, "ALGORITMO_DE_PLANIFICACION"));
 
     config_destroy(config);
 }
@@ -138,29 +138,23 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
             strcpy(m->nombre, nombre_mutex);
             m->pid_dueño = -1;
             m->cola_espera = queue_create();
+            pthread_mutex_init(&m->mutex_syscall);
 
             pthread_mutex_lock(&mutex_lista_mutex);
             list_add(lista_mutex, m);
             pthread_mutex_unlock(&mutex_lista_mutex);
         }
 
-        // el proceso NO pasa a BLOCK, sigue ejecutando
-        // cancelar el CambiarEstado(p, BLOCK) que hiciste arriba
         CambiarEstado(p, EXEC);
-        pthread_mutex_lock(&mutex_block);
-        queue_pop(cola_block); // sacarlo de BLOCK porque no se bloquea
-        pthread_mutex_unlock(&mutex_block);
-
         cpu->ocupado = true;
         cpu->pid_actual = p->pid;
-        // no liberar la CPU
     }
     else if (strcmp(syscall_nombre, "MUTEX_LOCK") == 0)
     {
         // bloquea solo si el mutex está tomado
         char nombre_mutex[50];
         recv(cpu->socket, nombre_mutex, sizeof(nombre_mutex), MSG_WAITALL);
-        
+
         t_mutex_proceso *m = BuscarMutex(nombre_mutex);
         if (m == NULL)
         {
@@ -168,17 +162,16 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
             return;
         }
 
+        pthread_mutex_lock(&m->mutex_syscall);
         if (m->pid_dueño == -1)
         {
             // mutex libre, el proceso lo toma y sigue ejecutando
             m->pid_dueño = pid;
+            pthread_mutex_unlock(&m->mutex_syscall);
+
             log_info(logger, "## (%d) Toma el Mutex %s", pid, nombre_mutex);
 
             CambiarEstado(p, EXEC);
-            pthread_mutex_lock(&mutex_block);
-            queue_pop(cola_block);
-            pthread_mutex_unlock(&mutex_block);
-
             cpu->ocupado = true;
             cpu->pid_actual = p->pid;
         }
@@ -187,7 +180,12 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
             // mutex tomado, el proceso queda en BLOCK esperando
             log_info(logger, "## (%d) queda bloqueado esperando Mutex %s", pid, nombre_mutex);
             queue_push(m->cola_espera, p);
-            // el proceso ya está en BLOCK, la CPU queda libre
+            pthread_mutex_unlock(&m->mutex_syscall);
+
+            CambiarEstado(p, BLOCK);
+            pthread_mutex_lock(&mutex_block);
+            queue_push(cola_block, p);
+            pthread_mutex_unlock(&mutex_block);
             cpu->ocupado = false;
             cpu->pid_actual = -1;
             sem_post(&sem_cpu_disponible);
@@ -208,14 +206,17 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
 
         log_info(logger, "## (%d) Libera el Mutex %s", pid, nombre_mutex);
 
+        pthread_mutex_lock(&m->mutex_syscall);
         if (!queue_is_empty(m->cola_espera))
         {
             // hay procesos esperando, el primero toma el mutex
             proceso *siguiente = queue_pop(m->cola_espera);
             m->pid_dueño = siguiente->pid;
-            log_info(logger, "## (%d) Toma el Mutex %s", siguiente->pid, nombre_mutex);
+            pthread_mutex_unlock(&m->mutex_syscall);
 
+            log_info(logger, "## (%d) Toma el Mutex %s", siguiente->pid, nombre_mutex);
             CambiarEstado(siguiente, READY);
+
             pthread_mutex_lock(&mutex_block);
             list_remove_element(cola_block->elements, siguiente);
             pthread_mutex_unlock(&mutex_block);
@@ -230,14 +231,11 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
         {
             // nadie esperando, el mutex queda libre
             m->pid_dueño = -1;
+            pthread_mutex_unlock(&m->mutex_syscall);
         }
 
         // el proceso que hizo unlock sigue ejecutando
         CambiarEstado(p, EXEC);
-        pthread_mutex_lock(&mutex_block);
-        queue_pop(cola_block);
-        pthread_mutex_unlock(&mutex_block);
-
         cpu->ocupado = true;
         cpu->pid_actual = p->pid;
     }
@@ -427,7 +425,8 @@ void RegistrarIO(int socket_cliente)
     // Crear estructura
     t_io_conectado *io = malloc(sizeof(t_io_conectado));
     io->socket = socket_cliente;
-    strncpy(io->tipo_io, tipo_io, sizeof(io->tipo_io));
+    strncpy(io->tipo_io, tipo_io, sizeof(io->tipo_io) - 1);
+    // io->tipo_io[sizeof(io->tipo_io) - 1] = '\0';  // asegurar null terminator, en caso de que el IO no lo haya hecho
 
     // Agregar a la lista global
     pthread_mutex_lock(&mutex_ios);
@@ -610,16 +609,16 @@ void EjecutarBSOD()
     }
     pthread_mutex_unlock(&mutex_cpus);
 
-    exit(1);
+    Cleanup();
 }
 
-void *EscucharKernelMemory(void *args)
+/*void *EscucharKernelMemory(void *args)
 {
     while (1)
     {
-        pthread_mutex_lock(&mutex_kernel_memory); // <-- lock
+        pthread_mutex_lock(&mutex_kernel_memory);
         int op_code = RecibirOperacion(socket_kernel_memory);
-        pthread_mutex_unlock(&mutex_kernel_memory); // <-- unlock
+        pthread_mutex_unlock(&mutex_kernel_memory);
 
         switch (op_code)
         {
@@ -632,7 +631,7 @@ void *EscucharKernelMemory(void *args)
         }
     }
     return NULL;
-}
+}*/
 
 // Planificador de largo plazo (NEW -> READY)
 void *PlanificadorLargoPlazo(void *args)
@@ -643,7 +642,7 @@ void *PlanificadorLargoPlazo(void *args)
 
         // Extraer de la cola NEW
         pthread_mutex_lock(&mutex_new);
-        proceso *p = queue_peek(cola_new);
+        proceso *p = queue_pop(cola_new);
         pthread_mutex_unlock(&mutex_new);
 
         pthread_mutex_lock(&mutex_kernel_memory);
@@ -658,13 +657,18 @@ void *PlanificadorLargoPlazo(void *args)
 
         pthread_mutex_unlock(&mutex_kernel_memory);
 
-        if (respuesta_memoria == PROCESO_CARGADO)
+        if (respuesta_memoria == MEMORIA_CORRUPTA)
+        {
+            EjecutarBSOD();
+            return NULL;
+        }
+        else if (respuesta_memoria == PROCESO_CARGADO)
         {
             log_info(logger, "## (%d) Se crea el proceso - Estado: NEW", p->pid);
 
             CambiarEstado(p, READY);
             pthread_mutex_lock(&mutex_ready);
-            queue_push(cola_ready, queue_pop(cola_new));
+            queue_push(cola_ready, p);
             pthread_mutex_unlock(&mutex_ready);
             log_info(logger, "Se añade el proceso %d a READY", p->pid);
 
@@ -840,7 +844,7 @@ void *HiloQuantum(void *args)
 
     // mandar interrupción a la CPU
     log_info(logger, "## (%d) - Desalojado por fin de quantum", pid);
-    EnviarOpCode(cpu->socket, DESCONEXION); // op code de interrupción por quantum
+    EnviarOpCode(cpu->socket, INTERRUPCION_QUANTUM); // op code de interrupción por quantum
 
     return NULL;
 }
@@ -862,9 +866,93 @@ t_mutex_proceso *BuscarMutex(char *nombre)
     return resultado;
 }
 
+void Cleanup()
+{
+    log_info(logger, "## Iniciando limpieza de recursos...");
+
+    // liberar strings duplicados con strdup
+    free(ip_kernel_memory);
+    free(algoritmo);
+
+    // cerrar socket del servidor y de kernel memory
+    close(socket_servidor);
+    close(socket_kernel_memory);
+
+    // cerrar y liberar CPUs
+    pthread_mutex_lock(&mutex_cpus);
+    for (int i = 0; i < list_size(lista_cpus); i++)
+    {
+        t_cpu_conectada *cpu = list_get(lista_cpus, i);
+        close(cpu->socket);
+        free(cpu);
+    }
+    list_destroy(lista_cpus);
+    pthread_mutex_unlock(&mutex_cpus);
+
+    // cerrar y liberar IOs
+    pthread_mutex_lock(&mutex_ios);
+    for (int i = 0; i < list_size(lista_ios); i++)
+    {
+        t_io_conectado *io = list_get(lista_ios, i);
+        close(io->socket);
+        free(io);
+    }
+    list_destroy(lista_ios);
+    pthread_mutex_unlock(&mutex_ios);
+
+    // liberar procesos
+    pthread_mutex_lock(&mutex_procesos);
+    for (int i = 0; i < list_size(lista_procesos); i++)
+    {
+        proceso *p = list_get(lista_procesos, i);
+        free(p);
+    }
+    list_destroy(lista_procesos);
+    pthread_mutex_unlock(&mutex_procesos);
+
+    // liberar mutexes de usuario y sus colas
+    pthread_mutex_lock(&mutex_lista_mutex);
+    for (int i = 0; i < list_size(lista_mutex); i++)
+    {
+        t_mutex_proceso *m = list_get(lista_mutex, i);
+        queue_destroy(m->cola_espera);
+        pthread_mutex_destroy(&m->mutex);
+        free(m);
+    }
+    list_destroy(lista_mutex);
+    pthread_mutex_unlock(&mutex_lista_mutex);
+
+    // liberar colas
+    queue_destroy(cola_new);
+    queue_destroy(cola_ready);
+    queue_destroy(cola_block);
+    queue_destroy(cola_susp_block);
+    queue_destroy(cola_susp_ready);
+
+    // destruir semáforos
+    sem_destroy(&sem_new);
+    sem_destroy(&sem_ready);
+    sem_destroy(&sem_cpu_disponible);
+
+    // destruir mutexes
+    pthread_mutex_destroy(&mutex_ready);
+    pthread_mutex_destroy(&mutex_new);
+    pthread_mutex_destroy(&mutex_cpus);
+    pthread_mutex_destroy(&mutex_ios);
+    pthread_mutex_destroy(&mutex_procesos);
+    pthread_mutex_destroy(&mutex_block);
+    pthread_mutex_destroy(&mutex_susp);
+    pthread_mutex_destroy(&mutex_kernel_memory);
+    pthread_mutex_destroy(&mutex_quantum);
+    pthread_mutex_destroy(&mutex_lista_mutex);
+
+    // destruir logger al último
+    log_info(logger, "## Limpieza finalizada");
+    log_destroy(logger);
+}
+
 int main(int argc, char *argv[])
 {
-
     if (argc < 3)
     {
         fprintf(stderr, "Uso: %s [Archivo Config] [Path Proceso Inicial]\n", argv[0]);
@@ -911,5 +999,6 @@ int main(int argc, char *argv[])
     pthread_join(hilo_largo, NULL);
     pthread_join(hilo_corto, NULL);
 
+    Cleanup();
     return 0;
 }

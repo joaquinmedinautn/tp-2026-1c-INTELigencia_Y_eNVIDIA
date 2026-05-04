@@ -47,6 +47,7 @@ typedef struct {
     char nombre[50];
     int pid_dueño;      // -1 si está libre
     t_queue* cola_espera;  // procesos esperando
+    pthread_mutex_t mutex_syscall;
 } t_mutex_proceso;
 
 void IniciarSemaforos();
@@ -68,8 +69,9 @@ char* NombreEstado(t_estado estado);
 void CambiarEstado(proceso* p, t_estado nuevo_estado);
 proceso* BuscarProceso(int pid);
 void EjecutarBSOD();
-void *EscucharKernelMemory(void* args);
+//void *EscucharKernelMemory(void* args);
 void *HiloQuantum(void *args);
 t_mutex_proceso *BuscarMutex(char *nombre);
+void Cleanup();
 
 #endif

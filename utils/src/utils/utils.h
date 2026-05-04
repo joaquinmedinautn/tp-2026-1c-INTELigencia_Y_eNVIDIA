@@ -38,7 +38,8 @@ typedef enum
     IO_STDOUT_WRITE,
     IO_SLEEP,
     IO_FINALIZADO,
-    MEMORIA_CORRUPTA
+    MEMORIA_CORRUPTA,
+    INTERRUPCION_QUANTUM
 } utils_op_code_kernel_scheduler;
 
 typedef enum
