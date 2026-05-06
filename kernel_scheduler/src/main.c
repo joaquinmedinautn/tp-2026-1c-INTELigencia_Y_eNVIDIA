@@ -45,7 +45,7 @@ void ObtenerConfig(char *archivo_config)
     ip_kernel_memory = strdup(config_get_string_value(config, "IP_KERNEL_MEMORY"));
     puerto_kernel_memory = config_get_int_value(config, "PUERTO_KERNEL_MEMORY");
     rr_quantum = config_get_int_value(config, "RR_QUANTUM");
-    algoritmo = strdup(config_get_string_value(config, "ALGORITMO_DE_PLANIFICACION"));
+    algoritmo = strdup(config_get_string_value(config, "QUEUES_ALGORITHMS"));
 
     config_destroy(config);
 }
@@ -138,7 +138,7 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
             strcpy(m->nombre, nombre_mutex);
             m->pid_dueño = -1;
             m->cola_espera = queue_create();
-            pthread_mutex_init(&m->mutex_syscall);
+            pthread_mutex_init(&m->mutex_syscall, NULL);
 
             pthread_mutex_lock(&mutex_lista_mutex);
             list_add(lista_mutex, m);
@@ -916,7 +916,7 @@ void Cleanup()
     {
         t_mutex_proceso *m = list_get(lista_mutex, i);
         queue_destroy(m->cola_espera);
-        pthread_mutex_destroy(&m->mutex);
+        pthread_mutex_destroy(&m->mutex_syscall);
         free(m);
     }
     list_destroy(lista_mutex);
