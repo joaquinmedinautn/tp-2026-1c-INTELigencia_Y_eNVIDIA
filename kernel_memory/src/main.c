@@ -7,6 +7,8 @@ t_log *logger;
 t_dictionary *procesos;
 pthread_mutex_t mutex_procesos;
 
+char* scripts_path;
+
 int socket_servidor;
 int puerto_escucha;
 int socket_kernel_scheduler;
@@ -25,7 +27,7 @@ void ObtenerConfig() {
         exit(EXIT_FAILURE);
     }
     puerto_escucha = config_get_int_value(config, "PUERTO_ESCUCHA");
-    instruction_delay = config_get_int_value(config, "INTRUCTION_DELAY");
+    instruction_delay = config_get_int_value(config, "INSTRUCTION_DELAY");
     
     scripts_path = string_duplicate(config_get_string_value(config, "SCRIPTS_BASEPATH"));
 
@@ -44,7 +46,7 @@ void atender_cliente(void* void_socket) {
     free(void_socket);
 
 
-    int cod_op = recibir_operacion(socket_cliente);
+    int cod_op = RecibirOperacion(socket_cliente);
     
     switch (cod_op) {
         case KERNEL_SCHEDULER:
@@ -66,7 +68,7 @@ void atender_cliente(void* void_socket) {
 
     // bucle de mensajes 
     while (1) {
-        int cod_op_mensaje = recibir_operacion(socket_cliente);
+        int cod_op_mensaje = RecibirOperacion(socket_cliente);
         
         if (cod_op_mensaje == -1) {
             log_error(logger, "Cliente desconectado");
@@ -165,7 +167,7 @@ void atender_cliente(void* void_socket) {
                     char* key = string_itoa(pid);
 
                     pthread_mutex_lock(&mutex_procesos);
-                    dictionary_remove_and_destroy_elements(procesos, key, eliminar_contexto);
+                    dictionary_remove_and_destroy(procesos, key, eliminar_contexto);
                     pthread_mutex_unlock(&mutex_procesos);
 
                     log_info(logger, "## PID: %d - Proceso Finalizado (Memodia liberada)", pid);

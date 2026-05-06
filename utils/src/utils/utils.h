@@ -68,6 +68,10 @@ typedef enum{
     CREAR_PROCESO, //preparacion
     SOLICITUD_INSTRUCCION, //fetch
     FINALIZAR_PROCESO, //libero memoria
+    MENSAJE,
+    LECTURA_MEMORIA,
+    ESCRITURA_MEMORIA,
+    SOLICITUD_ESPACIO_LIBRE,
 } op_code;
 
 typedef struct {
@@ -82,6 +86,7 @@ typedef struct {
     uint8_t BX;
     uint8_t CX;
     uint8_t DX;
+    t_list* instrucciones;
 } t_contexto;
 
 

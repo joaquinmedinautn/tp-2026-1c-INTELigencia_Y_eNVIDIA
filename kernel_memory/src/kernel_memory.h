@@ -2,17 +2,11 @@
 #define KERNEL_MEMORY_H
 
 #include <utils/utils.h>
+#include <commons/string.h>
+
 
 void ObtenerConfig();
 
-typedef struct{
-    t_list* instrucciones;
-
-    uint32_t PC;
-    uint8_t AX, BX, CX, DX;
-    uint32_t EAX, EBX, ECX, EDX;
-    uint32_t SI, DI;
-} t_contexto;
 
 void atender_cliente(void* void_socket); 
 void cargar_instrucciones(uint32_t pid, char* path_relativo);

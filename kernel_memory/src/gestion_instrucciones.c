@@ -1,4 +1,5 @@
 #include "kernel_memory.h"
+#include <commons/string.h>
 
 
 extern t_dictionary* procesos;
@@ -63,13 +64,16 @@ char* obtener_instruccion(uint32_t pid, uint32_t pc) {
     if (ctx != NULL){
         if (pc < list_size(ctx->instrucciones)) {
         instruccion = list_get(ctx->instrucciones, pc);
-     } else { instruccion = "EXIT"
+     } else { instruccion = "EXIT";
     }
+}
+
     pthread_mutex_unlock(&mutex_procesos);
     
     free(key);
     return instruccion;
 }
+
 void eliminar_contexto(void* contexto_void){
     t_contexto* contexto = (t_contexto*)contexto_void;
 
