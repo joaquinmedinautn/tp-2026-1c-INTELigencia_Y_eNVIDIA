@@ -647,7 +647,7 @@ void *PlanificadorLargoPlazo(void *args)
 
         pthread_mutex_lock(&mutex_kernel_memory);
 
-        t_paquete *paquete = CrearPaquete(CARGAR_PROC);
+        t_paquete *paquete = CrearPaquete(CREAR_PROCESO);
         AgregarAPaquete(paquete, &(p->pid), sizeof(int));
         AgregarAPaquete(paquete, p->codigo, strlen(p->codigo) + 1);
         EnviarPaquete(paquete, socket_kernel_memory);
