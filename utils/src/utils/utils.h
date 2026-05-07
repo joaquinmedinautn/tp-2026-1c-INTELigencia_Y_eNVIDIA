@@ -14,42 +14,8 @@
 #include <semaphore.h>
 #include <stdint.h>
 
-typedef enum
-{
-    CPU_A_MEMORY_STICK,
-    LEER,
-    ESCRIBIR
-} utils_op_code_memory_stick;
 
-typedef enum
-{
-    CPU_A_KERNEL_SCHEDULER,
-    IO,
-    PROCESO_CARGADO,
-    ESPACIO_INSUFICIENTE,
-    CARGAR_PROC,
-    CPU_SOLICITA_PID,
-    CPU_SYSCALL,
-    CPU_PID_DEVUELTO,
-    KERNEL_ENVIA_PID,
-    KERNEL_NO_HAY_PROCESOS,
-    DESCONEXION,
-    IO_STDIN_READ,
-    IO_STDOUT_WRITE,
-    IO_SLEEP,
-    IO_FINALIZADO,
-    MEMORIA_CORRUPTA,
-    INTERRUPCION_QUANTUM
-} utils_op_code_kernel_scheduler;
 
-typedef enum
-{
-    KERNEL_SCHEDULER,
-    MEMORY_STICK,
-    CPU_A_KERNEL_MEMORY,
-    SWAP,
-    PROCESO
-} utils_op_code_kernel_memory;
 
 typedef struct
 {
@@ -63,15 +29,48 @@ typedef struct
 	t_buffer* buffer;
 } t_paquete;
 
-typedef enum{
+typedef enum {
+    // CONEXION
+    KERNEL_SCHEDULER,
+    CPU_A_KERNEL_MEMORY,
+    CPU_A_KERNEL_SCHEDULER,
+    IO,
+    SWAP,
+    CPU_A_MEMORY_STICK,
 
-    CREAR_PROCESO, //preparacion
-    SOLICITUD_INSTRUCCION, //fetch
-    FINALIZAR_PROCESO, //libero memoria
-    MENSAJE,
+    // Gestión de Procesos
+    CREAR_PROCESO,
+    PROCESO_CARGADO,
+    SOLICITUD_INSTRUCCION,
+    FINALIZAR_PROCESO,
+    
+    // Memoria (Lectura/Escritura)
     LECTURA_MEMORIA,
     ESCRITURA_MEMORIA,
     SOLICITUD_ESPACIO_LIBRE,
+    ESPACIO_INSUFICIENTE,
+    MEMORIA_CORRUPTA,
+    LEER,
+    ESCRIBIR,
+
+    // CPU y Planificacion
+    CPU_SOLICITA_PID,
+    CPU_SYSCALL,
+    CPU_PID_DEVUELTO,
+    KERNEL_ENVIA_PID,
+    KERNEL_NO_HAY_PROCESOS,
+    INTERRUPCION_QUANTUM,
+    PROCESO,
+
+    // Io
+    IO_STDIN_READ,
+    IO_STDOUT_WRITE,
+    IO_SLEEP,
+    IO_FINALIZADO,
+
+    // otros
+    MENSAJE,
+    DESCONEXION
 } op_code;
 
 typedef struct {

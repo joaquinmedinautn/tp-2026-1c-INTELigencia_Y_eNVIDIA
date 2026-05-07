@@ -50,7 +50,6 @@ void atender_cliente(void* void_socket) {
     
     switch (cod_op) {
         case KERNEL_SCHEDULER:
-            socket_kernel_scheduler = socket_cliente;
             log_info(logger, "## Kernel Scheduler Conectado");
             break;
         case CPU_A_KERNEL_MEMORY:
@@ -85,7 +84,7 @@ void atender_cliente(void* void_socket) {
                 cargar_instrucciones(pid, path); 
                 log_info(logger, "## PID: %d  Proceso Creado", pid); 
 
-                EnviarOpCode(socket_cliente, MENSAJE); 
+                EnviarOpCode(socket_cliente, PROCESO_CARGADO); 
                 list_destroy_and_destroy_elements(valores, free);
                 break;
             }
@@ -145,7 +144,7 @@ void atender_cliente(void* void_socket) {
                 log_info(logger, "## PID: %d Escritura Dir. Física: %d Tamaño: %d", pid, dir_fisica, tamanio); 
 
                 // respuesta Mock de confirmacion
-                EnviarOpCode(socket_cliente, MENSAJE); 
+                EnviarOpCode(socket_cliente, PROCESO_CARGADO); 
 
                 list_destroy_and_destroy_elements(valores, free);
                 break;

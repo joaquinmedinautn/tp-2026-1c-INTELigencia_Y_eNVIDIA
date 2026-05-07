@@ -1,4 +1,6 @@
 #include "cpu.h"
+#include <commons/string.h>
+#include <string.h>
 
 t_config *config;
 char *ip_kernel_scheduler;
@@ -27,8 +29,8 @@ int main(int argc, char *argv[])
     socket_kernel_memory = CrearConexion(ip_kernel_memory, puerto_kernel_memory);
     EnviarOpCode(socket_kernel_memory, CPU_A_KERNEL_MEMORY);
 
-    socket_memory_stick = CrearConexion(ip_memory_stick, puerto_memory_stick);
-    EnviarOpCode(socket_memory_stick, CPU_A_MEMORY_STICK);
+    //socket_memory_stick = CrearConexion(ip_memory_stick, puerto_memory_stick);
+   //EnviarOpCode(socket_memory_stick, CPU_A_MEMORY_STICK);
 
 
    while (1) {
@@ -49,12 +51,14 @@ void ObtenerConfig()
 {
     config = config_create("cpu.config");
     
-    ip_kernel_scheduler = config_get_string_value(config, "IP_KERNEL_SCHEDULER");
+    ip_kernel_scheduler = string_duplicate(config_get_string_value(config, "IP_KERNEL_SCHEDULER"));
     puerto_kernel_scheduler = config_get_int_value(config, "PUERTO_KERNEL_SCHEDULER");
+
     ip_kernel_memory = config_get_string_value(config, "IP_KERNEL_MEMORY");
     puerto_kernel_memory = config_get_int_value(config, "PUERTO_KERNEL_MEMORY");
-    ip_memory_stick = config_get_string_value(config, "IP_MEMORY_STICK");
-    puerto_memory_stick = config_get_int_value(config, "PUERTO_MEMORY_STICK");
+
+    //ip_memory_stick = config_get_string_value(config, "IP_MEMORY_STICK");
+    //puerto_memory_stick = config_get_int_value(config, "PUERTO_MEMORY_STICK");
 
 
     log_level = log_level_from_string(config_get_string_value(config, "LOG_LEVEL"));
