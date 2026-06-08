@@ -18,7 +18,13 @@ int socket_swap;
 int socket_misterioso;
 int instruction_delay;
 
+void* memoria_principal;
+t_bitarray* bitmap_marcos;
+int tam_memoria;
+int tam_pagina;
+int cant_marcos;
 
+t_dictionary* tablas_paginas;
 
 void ObtenerConfig() {
     config = config_create("kernel_memory.config");
@@ -38,6 +44,29 @@ void ObtenerConfig() {
 
     config_destroy(config);
     
+}
+
+void InicarEstructurasMemoria(){
+
+    t_config* config_temp = config_create("kernel_memory.config");
+    tam_memoria = config_get_int_value(config_temp, "TAM_MEMORIA");
+    tam_pagina = config_get_int_value(config_temp, "TAM PAGINA");
+    config_destroy(config_temp);
+
+    cant_marcos = tam_memoria / tam_pagina
+
+    memoria_principal =malloc(tam_memoria);
+    memset(memoria_principal, 0, tam_memoria);
+
+    int bytes_bitarray = cant_marcos / 8;
+    if (cant_marcos  % 8 != 0) bytes_bitarray++;
+
+    void* espacio_bitarray = malloc(bytes_bitarray);
+    memset(espacio_bitarray, 0, bytes_bitarray);
+
+    bitmap_marcos = bitarray_create_with_size(espacio_bitarray, cant_marcos);
+
+    log_info(logger, "## Estructuras de Memoria iniciadas. Tamaño: %d, bytes, Marcos: %d", tam_memoria, cant_marcos);
 }
 
 // ejecuto cada hilo 
@@ -82,6 +111,15 @@ void atender_cliente(void* void_socket) {
                 char* path = list_get(valores, 1);
 
                 cargar_instrucciones(pid, path); 
+
+                //creo tabla de paginas vacia
+                t_list* nueva_tabla = list_create();
+                char* key =  string_itoa(pid);
+                pthread_mutex_lock(&mutex_procesos);
+                dictionary_put(tablas_paginas, key, nueva_tabla);
+                pthread_mutex_unlock(&mutex_procesos);
+                free(key);
+
                 log_info(logger, "## PID: %d  Proceso Creado", pid); 
 
                 EnviarOpCode(socket_cliente, PROCESO_CARGADO); 
@@ -120,16 +158,22 @@ void atender_cliente(void* void_socket) {
                 uint32_t dir_fisica = *(uint32_t*)list_get(valores, 1);
                 uint32_t tamanio = *(uint32_t*)list_get(valores, 2);
 
+                uint32_t dir_fisica =  traducir_direccion_logica(pid, dir_logica);
+
                 // log obligatorio de acceso a espacio de usuario 
                 log_info(logger, "## PID: %d Lectura Dir. Física: %d Tamaño: %d", pid, dir_fisica, tamanio);
 
                 // respuesta mock (valor 0) para que la CPU no se bloquee
-                uint32_t valor_mock = 0;
+                
+                void* buffer_leido =  malloc(tamanio);
+                memcpy(buffer_leido, memoria_principal + dir_fisica, tamanio);
+
                 t_paquete* res = CrearPaquete(LECTURA_MEMORIA);
                 AgregarAPaquete(res, &valor_mock, sizeof(uint32_t));
                 EnviarPaquete(res, socket_cliente);
+                
                 EliminarPaquete(res);
-
+                free(buffer_leido);
                 list_destroy_and_destroy_elements(valores, free);
                 break;
             }
@@ -140,11 +184,15 @@ void atender_cliente(void* void_socket) {
                 uint32_t pid = *(uint32_t*)list_get(valores, 0);
                 uint32_t dir_fisica = *(uint32_t*)list_get(valores, 1);
                 uint32_t tamanio = *(uint32_t*)list_get(valores, 2);
+                void* datos = list_get(valores, 3);
+
+                uint32_t dir_fisica = traducir_direccion_logica(pid, dir_logica);
 
                 log_info(logger, "## PID: %d Escritura Dir. Física: %d Tamaño: %d", pid, dir_fisica, tamanio); 
-
-                // respuesta Mock de confirmacion
-                EnviarOpCode(socket_cliente, PROCESO_CARGADO); 
+                
+                memcpy(memoria_principal + dir_fisica, datos_a_escribir, tamanio),
+                
+                EnviarOpCode(socket_cliente, MENSAJE); 
 
                 list_destroy_and_destroy_elements(valores, free);
                 break;
@@ -160,6 +208,19 @@ void atender_cliente(void* void_socket) {
                 EliminarPaquete(res);
                 break;
             }
+            case ASIGNAR_MEMORIA:{
+                t_list* valores = RecibirPaquete(socket_cliente);
+                uint32_t pid= *(uint32_t*)list_get(valores, 0);
+                int paginas_necesarias = *(int*)list_get(valores, 1);
+
+                if(asignar_paginas_proceso(pid,  paginas_necesarias)){
+                    EnviarOpCode(socket_cliente, MENSAJE);
+                } else {
+                    EnviarOpCode(socket_cliente, ESPACIO_INSUFICIENTE);
+                }
+                list_destroy_and_destroy_elements(valores, free);
+                break;
+            }
             case FINALIZAR_PROCESO:{
                     t_list* valores =  RecibirPaquete(socket_cliente);
                     uint32_t pid = *(uint32_t*) list_get(valores, 0);
@@ -168,6 +229,8 @@ void atender_cliente(void* void_socket) {
                     pthread_mutex_lock(&mutex_procesos);
                     dictionary_remove_and_destroy(procesos, key, eliminar_contexto);
                     pthread_mutex_unlock(&mutex_procesos);
+
+                    liberar_memoria_proceso(pid);
 
                     log_info(logger, "## PID: %d - Proceso Finalizado (Memodia liberada)", pid);
 
@@ -183,6 +246,50 @@ void atender_cliente(void* void_socket) {
     close(socket_cliente);
 }
 
+uint32_t traducir_direccion_logica(uint32_t pid,uint32_t dir_logica){
+
+    uint32_t numero_pagina = dir_logica / tam_pagina;
+    uint32_t offset = dir_logica % tam_pagina;
+
+    //busco tabla de paginas del proceso
+    char* key = string_itoa(pid);
+    pthread_mutex_lock(&mutex_procesos);
+    t_list* tabla =  dictionary_get(tablas_paginas, key);
+    pthread_mutex_unlock(&mutex_procesos);
+    free(key);
+
+    //obtengo el marco fisico
+    int* marco_ptr = list_get(tabla, numero_pagina);
+    if (marco_ptr == NULL){
+        log_error(logger, "Error: Página %d no está asignada en PID %d",  numero_pagina, pid );
+        return -1;
+    } 
+
+    uint32_t marco = *marco_ptr;
+    
+    log_info(logger, "## PID: %d - TPREG: %d - MARCO: %d", pid, numero_pagina, marco);
+    
+    return (marco * tam_pagina) + offset;
+} 
+
+void liberar_memoria_proceso(uint32_t pid){
+    char*key  = string_itoa(pid);
+    pthread_mutex_lock(&mutex_paginas);
+    t_list* tabla = dictionary_reove(tablas_paginas, key);
+    pthread_mutex_unlock(&mutex_paginas);
+    free(key);
+
+    if (tabla != NULL){
+        for (int i = 0; i < list_size(tabla); i++){
+            int* marco = list_get(tabla, i);
+            bitarray_clean_bit(bitmap_marcos, *marco);
+            free(marco);
+
+        }
+        list_destroy(tabla);
+    }
+}
+
 int main(int argc, char *argv[])
 {
 
@@ -190,7 +297,11 @@ int main(int argc, char *argv[])
     ObtenerConfig();
 
     procesos = dictionary_create();
+    tablas_paginas = dictionary_create();
+
     pthread_mutex_init(&mutex_procesos, NULL);
+
+    InicarEstructurasMemoria();
 
     
     socket_servidor = IniciarServidor(puerto_escucha);
@@ -215,7 +326,10 @@ int main(int argc, char *argv[])
     dictionary_destroy_and_destroy_elements(procesos, eliminar_contexto);
     pthread_mutex_destroy(&mutex_procesos);
     free(scripts_path);
-    log_destroy(logger);
 
+    free(memoria_principal);
+    bitarray_destroy(bitmap_marcos);
+
+    log_destroy(logger);
     return 0;
 }
