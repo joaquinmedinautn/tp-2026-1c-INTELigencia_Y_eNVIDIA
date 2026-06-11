@@ -13,6 +13,9 @@
 #include <commons/collections/queue.h>
 #include <semaphore.h>
 #include <stdint.h>
+#include <commos/bitarray.h>
+#include <commos/collections/dictionary.h>
+#include <commos/collections/list.h>
 
 
 
@@ -28,6 +31,21 @@ typedef struct
     int codigo_operacion;
 	t_buffer* buffer;
 } t_paquete;
+
+typedef struct{
+    uint32_t pid;
+    uint32_t id_segmento;
+    uint32_t base;
+    uint32_t tamanio;
+    bool presente;
+    t_list* bloque_swap;
+} t_segmento;
+
+typedef struct{
+    uint32_t base;
+    uint32_t tamanio;
+} t_hueco_libre;
+
 
 typedef enum {
     // CONEXION
@@ -70,7 +88,11 @@ typedef enum {
 
     // otros
     MENSAJE,
-    DESCONEXION
+    DESCONEXION,
+
+    //swap
+    ESCRITURA_BLOQUE,
+    LECTURA_BLOQUE
 } op_code;
 
 typedef struct {
