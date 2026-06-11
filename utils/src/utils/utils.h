@@ -13,9 +13,9 @@
 #include <commons/collections/queue.h>
 #include <semaphore.h>
 #include <stdint.h>
-#include <commos/bitarray.h>
-#include <commos/collections/dictionary.h>
-#include <commos/collections/list.h>
+#include <commons/bitarray.h>
+#include <commons/collections/dictionary.h>
+#include <commons/collections/list.h>
 
 
 
@@ -38,7 +38,7 @@ typedef struct{
     uint32_t base;
     uint32_t tamanio;
     bool presente;
-    t_list* bloque_swap;
+    t_list* bloques_swap;
 } t_segmento;
 
 typedef struct{
@@ -62,14 +62,19 @@ typedef enum {
     SOLICITUD_INSTRUCCION,
     FINALIZAR_PROCESO,
     
-    // Memoria (Lectura/Escritura)
+    // Memoria (
     LECTURA_MEMORIA,
     ESCRITURA_MEMORIA,
+    ASIGNAR_MEMORIA,
     SOLICITUD_ESPACIO_LIBRE,
     ESPACIO_INSUFICIENTE,
     MEMORIA_CORRUPTA,
     LEER,
     ESCRIBIR,
+    SOLICITUD_COMPACTACION,
+    SUSPENDER_PROCESO,
+    DESUSPENDER_PROCESO,
+    COMPACTAR_MEMORIA,
 
     // CPU y Planificacion
     CPU_SOLICITA_PID,
@@ -89,7 +94,7 @@ typedef enum {
     // otros
     MENSAJE,
     DESCONEXION,
-
+    SEGMENTATION_FAULT,
     //swap
     ESCRITURA_BLOQUE,
     LECTURA_BLOQUE
