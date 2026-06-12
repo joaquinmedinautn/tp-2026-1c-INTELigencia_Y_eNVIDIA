@@ -81,6 +81,7 @@ void *EscucharKernelMemory(void* args);
 void *HiloQuantum(void *args);
 void *HiloSuspension(void *args);
 t_mutex_proceso *BuscarMutex(char *nombre);
+bool CompararSuspension(proceso *a, proceso *b);
 void IntentarDesalojoPorPrioridad(proceso *nuevo);
 void EncolarReady(proceso *p);
 void CambiarPrioridadProceso(proceso *p, int nueva_prioridad);

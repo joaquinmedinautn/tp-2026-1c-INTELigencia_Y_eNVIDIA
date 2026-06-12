@@ -33,6 +33,7 @@ sem_t sem_ready;
 sem_t sem_cpu_disponible;
 sem_t sem_memoria_disponible;
 sem_t sem_cpus_desalojadas; // cuenta cuántas CPUs confirmaron el desalojo
+sem_t sem_fin_compactacion;
 pthread_mutex_t mutex_ready;
 pthread_mutex_t mutex_new;
 pthread_mutex_t mutex_cpus;
@@ -98,6 +99,7 @@ void IniciarSemaforos()
     sem_init(&sem_cpu_disponible, 0, 0); // Inicialmente en 0, se incrementa cuando hay CPUs
     sem_init(&sem_memoria_disponible, 0, 0);
     sem_init(&sem_cpus_desalojadas, 0, 0);
+    sem_init(&sem_fin_compactacion, 0, 0);
     pthread_mutex_init(&mutex_ready, NULL);
     pthread_mutex_init(&mutex_cpus, NULL);
     pthread_mutex_init(&mutex_ios, NULL);
@@ -107,6 +109,7 @@ void IniciarSemaforos()
     pthread_mutex_init(&mutex_kernel_memory, NULL);
     pthread_mutex_init(&mutex_lista_mutex, NULL);
     pthread_mutex_init(&mutex_pid, NULL);
+    pthread_mutex_init(&mutex_quantum, NULL);
     pthread_mutex_init(&mutex_compactacion, NULL);
 }
 
@@ -341,7 +344,21 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
 
         if (respuesta == NECESITA_COMPACTACION)
         {
-            // disparar compactación (lo vemos en el fix de compactación)
+            // la compactación llega por socket_km_eventos y la maneja EscucharKernelMemory.
+            // este hilo espera a que termine antes de reintentar.
+            sem_wait(&sem_fin_compactacion);
+
+            // reintentar la creación del segmento, ahora ya hay espacio contiguo
+            pthread_mutex_lock(&mutex_kernel_memory);
+            t_paquete *reintento = CrearPaquete(CREAR_SEGMENTO);
+            AgregarAPaquete(reintento, &pid, sizeof(int));
+            AgregarAPaquete(reintento, &id_segmento, sizeof(int));
+            AgregarAPaquete(reintento, &tamanio_seg, sizeof(int));
+            EnviarPaquete(reintento, socket_kernel_memory);
+            EliminarPaquete(reintento);
+
+            RecibirOperacion(socket_kernel_memory);
+            pthread_mutex_unlock(&mutex_kernel_memory);
         }
 
         // en todos los casos reenviar el proceso a la MISMA CPU
@@ -662,7 +679,7 @@ void *AtenderCPU(void *args)
 
                 cpu->ocupado = false;
                 cpu->pid_actual = -1;
-                
+
                 pthread_mutex_lock(&mutex_compactacion);
                 bool en_compactacion = compactacion_en_curso;
                 pthread_mutex_unlock(&mutex_compactacion);
@@ -914,7 +931,7 @@ void *PlanificadorMedianoPlazo(void *args)
         pthread_mutex_unlock(&mutex_susp);
 
         // ordenar: menor prioridad primero, si igual prioridad el que lleva más tiempo suspendido
-        list_sort(suspendidos, (void *)comparar_suspension);
+        list_sort(suspendidos, (void *)CompararSuspension);
 
         // intentar des-suspender cada proceso en orden
         for (int i = 0; i < list_size(suspendidos); i++)
@@ -966,7 +983,7 @@ void *PlanificadorMedianoPlazo(void *args)
 }
 
 // retorna true si a va antes que b
-bool comparar_suspension(proceso *a, proceso *b)
+bool CompararSuspension(proceso *a, proceso *b)
 {
     if (a->prioridad != b->prioridad)
         return a->prioridad < b->prioridad;             // menor número = mayor prioridad
@@ -1373,6 +1390,8 @@ void FinalizarCompactacion()
 
     // hay memoria disponible tras compactar
     sem_post(&sem_memoria_disponible);
+    // despertar al hilo de MEM_ALLOC que está esperando para reintentar
+    sem_post(&sem_fin_compactacion);
 }
 
 void Cleanup()
@@ -1456,6 +1475,9 @@ void Cleanup()
     sem_destroy(&sem_new);
     sem_destroy(&sem_ready);
     sem_destroy(&sem_cpu_disponible);
+    sem_destroy(&sem_memoria_disponible);
+    sem_destroy(&sem_cpus_desalojadas);
+    sem_destroy(&sem_fin_compactacion);
 
     // destruir mutexes
     pthread_mutex_destroy(&mutex_ready);
@@ -1468,6 +1490,8 @@ void Cleanup()
     pthread_mutex_destroy(&mutex_kernel_memory);
     pthread_mutex_destroy(&mutex_quantum);
     pthread_mutex_destroy(&mutex_lista_mutex);
+    pthread_mutex_destroy(&mutex_pid);
+    pthread_mutex_destroy(&mutex_compactacion);
 
     // destruir logger al último
     log_info(logger, "## Limpieza finalizada");
