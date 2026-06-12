@@ -17,9 +17,6 @@
 #include <commons/collections/dictionary.h>
 #include <commons/collections/list.h>
 
-
-
-
 typedef struct
 {
 	int size;
@@ -61,6 +58,7 @@ typedef enum {
     PROCESO_CARGADO,
     SOLICITUD_INSTRUCCION,
     FINALIZAR_PROCESO,
+    SUSPENDER_PROCESO,
     
     // Memoria (
     LECTURA_MEMORIA,
@@ -84,6 +82,12 @@ typedef enum {
     KERNEL_NO_HAY_PROCESOS,
     INTERRUPCION_QUANTUM,
     PROCESO,
+    CARGAR_PROC,
+    KERNEL_SCHEDULER_EVENTOS,
+    NECESITA_COMPACTACION,
+    CONSULTAR_ESPACIO,
+    CREAR_SEGMENTO,
+    ELIMINAR_SEGMENTO,
 
     // Io
     IO_STDIN_READ,

@@ -7,11 +7,13 @@ t_config *config;
 int socket_cpu;
 int socket_io;
 int socket_kernel_memory;
+int socket_km_eventos;
 char *ip_kernel_memory;
 int puerto_kernel_memory;
 int rr_quantum;
 bool quantum_activo = false;
 char *algoritmo;
+int suspension_timeout;
 t_log *logger;
 t_log_level log_level;
 t_queue *cola_new;
@@ -22,6 +24,7 @@ t_queue *cola_susp_ready;
 sem_t sem_new;
 sem_t sem_ready;
 sem_t sem_cpu_disponible;
+sem_t sem_memoria_disponible;
 pthread_mutex_t mutex_ready;
 pthread_mutex_t mutex_new;
 pthread_mutex_t mutex_cpus;
@@ -46,6 +49,7 @@ void ObtenerConfig(char *archivo_config)
     puerto_kernel_memory = config_get_int_value(config, "PUERTO_KERNEL_MEMORY");
     rr_quantum = config_get_int_value(config, "RR_QUANTUM");
     algoritmo = strdup(config_get_string_value(config, "QUEUES_ALGORITHMS"));
+    suspension_timeout = config_get_int_value(config, "SUSPENSION_TIMEOUT");
 
     config_destroy(config);
 }
@@ -55,6 +59,7 @@ void IniciarSemaforos()
     sem_init(&sem_new, 0, 0);
     sem_init(&sem_ready, 0, 0);
     sem_init(&sem_cpu_disponible, 0, 0); // Inicialmente en 0, se incrementa cuando hay CPUs
+    sem_init(&sem_memoria_disponible, 0, 0);
     pthread_mutex_init(&mutex_ready, NULL);
     pthread_mutex_init(&mutex_cpus, NULL);
     pthread_mutex_init(&mutex_ios, NULL);
@@ -80,12 +85,21 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
     if (strcmp(syscall_nombre, "SLEEP") == 0)
     {
         CambiarEstado(p, BLOCK);
+        // lanzar timer de suspensión
+        t_args_suspension *args_susp = malloc(sizeof(t_args_suspension));
+        args_susp->pid = pid;
+        pthread_t hilo_susp;
+        pthread_create(&hilo_susp, NULL, HiloSuspension, args_susp);
+        pthread_detach(hilo_susp);
+
         pthread_mutex_lock(&mutex_block);
         queue_push(cola_block, p);
         pthread_mutex_unlock(&mutex_block);
+
         int tiempo;
         recv(cpu->socket, &tiempo, sizeof(int), MSG_WAITALL);
         EnviarAIO("SLEEP", IO_SLEEP, pid, &tiempo);
+
         cpu->ocupado = false;
         cpu->pid_actual = -1;
         sem_post(&sem_cpu_disponible);
@@ -93,16 +107,26 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
     else if (strcmp(syscall_nombre, "STDIN") == 0)
     {
         CambiarEstado(p, BLOCK);
+        // lanzar timer de suspensión
+        t_args_suspension *args_susp = malloc(sizeof(t_args_suspension));
+        args_susp->pid = pid;
+        pthread_t hilo_susp;
+        pthread_create(&hilo_susp, NULL, HiloSuspension, args_susp);
+        pthread_detach(hilo_susp);
+
         pthread_mutex_lock(&mutex_block);
         queue_push(cola_block, p);
         pthread_mutex_unlock(&mutex_block);
-        int direccion_logica, tamanio;
-        recv(cpu->socket, &direccion_logica, sizeof(int), MSG_WAITALL);
+
+        int direccion_fisica, tamanio;
+        recv(cpu->socket, &direccion_fisica, sizeof(int), MSG_WAITALL);
         recv(cpu->socket, &tamanio, sizeof(int), MSG_WAITALL);
-        p->dir_logica_io = direccion_logica;
+        p->dir_fisica_io = direccion_fisica;
         p->tamanio_io = tamanio;
+
         int params[1] = {tamanio};
         EnviarAIO("STDIN", IO_STDIN_READ, pid, params);
+
         cpu->ocupado = false;
         cpu->pid_actual = -1;
         sem_post(&sem_cpu_disponible);
@@ -110,16 +134,26 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
     else if (strcmp(syscall_nombre, "STDOUT") == 0)
     {
         CambiarEstado(p, BLOCK);
+        // lanzar timer de suspensión
+        t_args_suspension *args_susp = malloc(sizeof(t_args_suspension));
+        args_susp->pid = pid;
+        pthread_t hilo_susp;
+        pthread_create(&hilo_susp, NULL, HiloSuspension, args_susp);
+        pthread_detach(hilo_susp);
+
         pthread_mutex_lock(&mutex_block);
         queue_push(cola_block, p);
         pthread_mutex_unlock(&mutex_block);
-        int direccion_logica, tamanio;
-        recv(cpu->socket, &direccion_logica, sizeof(int), MSG_WAITALL);
+
+        int direccion_fisica, tamanio;
+        recv(cpu->socket, &direccion_fisica, sizeof(int), MSG_WAITALL);
         recv(cpu->socket, &tamanio, sizeof(int), MSG_WAITALL);
-        p->dir_logica_io = direccion_logica;
+        p->dir_fisica_io = direccion_fisica;
         p->tamanio_io = tamanio;
-        int params[2] = {direccion_logica, tamanio};
+
+        int params[2] = {direccion_fisica, tamanio};
         EnviarAIO("STDOUT", IO_STDOUT_WRITE, pid, params);
+
         cpu->ocupado = false;
         cpu->pid_actual = -1;
         sem_post(&sem_cpu_disponible);
@@ -183,6 +217,12 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
             pthread_mutex_unlock(&m->mutex_syscall);
 
             CambiarEstado(p, BLOCK);
+            // lanzar timer de suspensión
+            t_args_suspension *args_susp = malloc(sizeof(t_args_suspension));
+            args_susp->pid = pid;
+            pthread_t hilo_susp;
+            pthread_create(&hilo_susp, NULL, HiloSuspension, args_susp);
+            pthread_detach(hilo_susp);
             pthread_mutex_lock(&mutex_block);
             queue_push(cola_block, p);
             pthread_mutex_unlock(&mutex_block);
@@ -238,6 +278,84 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
         CambiarEstado(p, EXEC);
         cpu->ocupado = true;
         cpu->pid_actual = p->pid;
+    }
+    else if (strcmp(syscall_nombre, "MEM_ALLOC") == 0)
+    {
+        int id_segmento, tamanio_seg;
+        recv(cpu->socket, &id_segmento, sizeof(int), MSG_WAITALL);
+        recv(cpu->socket, &tamanio_seg, sizeof(int), MSG_WAITALL);
+
+        pthread_mutex_lock(&mutex_kernel_memory);
+        t_paquete *paquete = CrearPaquete(CREAR_SEGMENTO);
+        AgregarAPaquete(paquete, &pid, sizeof(int));
+        AgregarAPaquete(paquete, &id_segmento, sizeof(int));
+        AgregarAPaquete(paquete, &tamanio_seg, sizeof(int));
+        EnviarPaquete(paquete, socket_kernel_memory);
+        EliminarPaquete(paquete);
+
+        int respuesta = RecibirOperacion(socket_kernel_memory);
+        pthread_mutex_unlock(&mutex_kernel_memory);
+
+        if (respuesta == NECESITA_COMPACTACION)
+        {
+            // disparar compactación (lo vemos en el fix de compactación)
+        }
+
+        // en todos los casos reenviar el proceso a la MISMA CPU
+        CambiarEstado(p, EXEC);
+        cpu->ocupado = true;
+        cpu->pid_actual = p->pid;
+        // no liberar la CPU, el proceso vuelve a ella
+    }
+    else if (strcmp(syscall_nombre, "MEM_FREE") == 0)
+    {
+        int id_segmento;
+        recv(cpu->socket, &id_segmento, sizeof(int), MSG_WAITALL);
+
+        pthread_mutex_lock(&mutex_kernel_memory);
+        t_paquete *paquete = CrearPaquete(ELIMINAR_SEGMENTO);
+        AgregarAPaquete(paquete, &pid, sizeof(int));
+        AgregarAPaquete(paquete, &id_segmento, sizeof(int));
+        EnviarPaquete(paquete, socket_kernel_memory);
+        EliminarPaquete(paquete);
+
+        RecibirOperacion(socket_kernel_memory); // confirmación
+        pthread_mutex_unlock(&mutex_kernel_memory);
+
+        // reenviar a la MISMA CPU
+        CambiarEstado(p, EXEC);
+        cpu->ocupado = true;
+        cpu->pid_actual = p->pid;
+
+        // MEM_FREE libera memoria, avisar al mediano plazo
+        sem_post(&sem_memoria_disponible);
+    }
+    else if (strcmp(syscall_nombre, "EXIT") == 0)
+    {
+        pthread_mutex_lock(&mutex_kernel_memory);
+        t_paquete *paquete = CrearPaquete(FINALIZAR_PROCESO);
+        AgregarAPaquete(paquete, &pid, sizeof(int));
+        EnviarPaquete(paquete, socket_kernel_memory);
+        EliminarPaquete(paquete);
+        RecibirOperacion(socket_kernel_memory);
+        pthread_mutex_unlock(&mutex_kernel_memory);
+
+        CambiarEstado(p, EXIT);
+        log_info(logger, "## (%d) finalizó su ejecución con motivo de EXIT", pid);
+
+        pthread_mutex_lock(&mutex_procesos);
+        list_remove_element(lista_procesos, p);
+        pthread_mutex_unlock(&mutex_procesos);
+
+        free(p);
+
+        // liberar la CPU
+        cpu->ocupado = false;
+        cpu->pid_actual = -1;
+        sem_post(&sem_cpu_disponible);
+
+        // EXIT libera memoria también
+        sem_post(&sem_memoria_disponible);
     }
 }
 
@@ -536,7 +654,7 @@ void *AtenderIO(void *args)
                 pthread_mutex_lock(&mutex_kernel_memory);
                 t_paquete *paquete = CrearPaquete(ESCRIBIR);
                 AgregarAPaquete(paquete, &pid, sizeof(int));
-                AgregarAPaquete(paquete, &(p->dir_logica_io), sizeof(int));
+                AgregarAPaquete(paquete, &(p->dir_fisica_io), sizeof(int));
                 AgregarAPaquete(paquete, &(p->tamanio_io), sizeof(int));
                 AgregarAPaquete(paquete, bytes, size);
                 EnviarPaquete(paquete, socket_kernel_memory);
@@ -612,13 +730,12 @@ void EjecutarBSOD()
     Cleanup();
 }
 
-/*void *EscucharKernelMemory(void *args)
+void *EscucharKernelMemory(void *args)
 {
     while (1)
     {
-        pthread_mutex_lock(&mutex_kernel_memory);
-        int op_code = RecibirOperacion(socket_kernel_memory);
-        pthread_mutex_unlock(&mutex_kernel_memory);
+        // este socket es exclusivo de este hilo, no necesita mutex
+        int op_code = RecibirOperacion(socket_km_eventos);
 
         switch (op_code)
         {
@@ -626,12 +743,23 @@ void EjecutarBSOD()
             EjecutarBSOD();
             return NULL;
 
+        case NUEVO_MEMORY_STICK:
+            log_info(logger, "## Nuevo Memory Stick conectado - más memoria disponible");
+            sem_post(&sem_memoria_disponible);
+            break;
+
+        case FIN_COMPACTACION:
+            log_info(logger, "## Fin de compactación");
+            // desbloquear CPUs y reanudar planificación
+            sem_post(&sem_memoria_disponible);
+            break;
+
         default:
-            log_error(logger, "Mensaje desconocido de Kernel Memory: %d", op_code);
+            log_error(logger, "Notificación desconocida de Kernel Memory: %d", op_code);
         }
     }
     return NULL;
-}*/
+}
 
 // Planificador de largo plazo (NEW -> READY)
 void *PlanificadorLargoPlazo(void *args)
@@ -683,6 +811,105 @@ void *PlanificadorLargoPlazo(void *args)
             free(p);
         }
     }
+}
+
+void *PlanificadorMedianoPlazo(void *args)
+{
+    while (1)
+    {
+        // espera a que haya memoria disponible
+        // (se despierta cuando llega nuevo memory stick, se libera memoria, o compactación)
+        sem_wait(&sem_memoria_disponible);
+
+        pthread_mutex_lock(&mutex_susp);
+        if (queue_is_empty(cola_susp_block) && queue_is_empty(cola_susp_ready))
+        {
+            pthread_mutex_unlock(&mutex_susp);
+            continue;
+        }
+
+        // ordenar suspendidos por prioridad, y por tiempo si igual prioridad
+        // trabajar sobre una lista temporal para no modificar la cola mientras iteramos
+        t_list *suspendidos = list_create();
+
+        // agregar los de SUSP_BLOCK
+        t_queue *temp_block = cola_susp_block;
+        while (!queue_is_empty(temp_block))
+        {
+            list_add(suspendidos, queue_pop(temp_block));
+        }
+
+        // agregar los de SUSP_READY
+        t_queue *temp_ready = cola_susp_ready;
+        while (!queue_is_empty(temp_ready))
+        {
+            list_add(suspendidos, queue_pop(temp_ready));
+        }
+
+        pthread_mutex_unlock(&mutex_susp);
+
+        // ordenar: menor prioridad primero, si igual prioridad el que lleva más tiempo suspendido
+        list_sort(suspendidos, (void *)comparar_suspension);
+
+        // intentar des-suspender cada proceso en orden
+        for (int i = 0; i < list_size(suspendidos); i++)
+        {
+            proceso *p = list_get(suspendidos, i);
+
+            // consultar a Kernel Memory si hay espacio sin compactar
+            pthread_mutex_lock(&mutex_kernel_memory);
+            t_paquete *paquete = CrearPaquete(CONSULTAR_ESPACIO);
+            AgregarAPaquete(paquete, &(p->pid), sizeof(int));
+            EnviarPaquete(paquete, socket_kernel_memory);
+            EliminarPaquete(paquete);
+
+            int respuesta = RecibirOperacion(socket_kernel_memory);
+            pthread_mutex_unlock(&mutex_kernel_memory);
+
+            if (respuesta == PROCESO_CARGADO)
+            {
+                // hay espacio: des-suspender
+                if (p->estado == SUSP_BLOCK)
+                {
+                    // todavía esperando IO → SUSP_READY
+                    CambiarEstado(p, SUSP_READY);
+                    pthread_mutex_lock(&mutex_susp);
+                    queue_push(cola_susp_ready, p);
+                    pthread_mutex_unlock(&mutex_susp);
+                }
+                else if (p->estado == SUSP_READY)
+                {
+                    // IO ya terminó → READY
+                    CambiarEstado(p, READY);
+                    pthread_mutex_lock(&mutex_ready);
+                    queue_push(cola_ready, p);
+                    pthread_mutex_unlock(&mutex_ready);
+                    sem_post(&sem_ready);
+                }
+            }
+            else
+            {
+                // no hay espacio: volver a la cola suspendida
+                pthread_mutex_lock(&mutex_susp);
+                if (p->estado == SUSP_BLOCK)
+                    queue_push(cola_susp_block, p);
+                else
+                    queue_push(cola_susp_ready, p);
+                pthread_mutex_unlock(&mutex_susp);
+            }
+        }
+
+        list_destroy(suspendidos);
+    }
+    return NULL;
+}
+
+// retorna true si a va antes que b
+bool comparar_suspension(proceso *a, proceso *b)
+{
+    if (a->prioridad != b->prioridad)
+        return a->prioridad < b->prioridad;             // menor número = mayor prioridad
+    return a->tiempo_suspension < b->tiempo_suspension; // mayor tiempo suspendido primero
 }
 
 // Planificador de corto plazo (READY -> EXEC)
@@ -849,6 +1076,55 @@ void *HiloQuantum(void *args)
     return NULL;
 }
 
+void *HiloSuspension(void *args)
+{
+    t_args_suspension *datos = (t_args_suspension *)args;
+    int pid = datos->pid;
+    free(datos);
+
+    usleep(suspension_timeout * 1000);
+
+    proceso *p = BuscarProceso(pid);
+    if (p == NULL)
+        return NULL;
+
+    pthread_mutex_lock(&mutex_procesos);
+    if (p->estado != BLOCK)
+    {
+        // el proceso ya salió de BLOCK antes del timeout (IO terminó)
+        pthread_mutex_unlock(&mutex_procesos);
+        return NULL;
+    }
+
+    // sigue en BLOCK, suspender
+    CambiarEstado(p, SUSP_BLOCK);
+    p->tiempo_suspension = time(NULL);
+
+    // sacar de cola_block y meter en cola_susp_block
+    pthread_mutex_lock(&mutex_block);
+    list_remove_element(cola_block->elements, p);
+    pthread_mutex_unlock(&mutex_block);
+
+    pthread_mutex_lock(&mutex_susp);
+    queue_push(cola_susp_block, p);
+    pthread_mutex_unlock(&mutex_susp);
+
+    pthread_mutex_unlock(&mutex_procesos);
+
+    // avisar a Kernel Memory que suspenda el proceso (mueve segmentos a SWAP)
+    pthread_mutex_lock(&mutex_kernel_memory);
+    t_paquete *paquete = CrearPaquete(SUSPENDER_PROCESO);
+    AgregarAPaquete(paquete, &pid, sizeof(int));
+    EnviarPaquete(paquete, socket_kernel_memory);
+    EliminarPaquete(paquete);
+    RecibirOperacion(socket_kernel_memory); // confirmación
+    pthread_mutex_unlock(&mutex_kernel_memory);
+
+    log_info(logger, "## (%d) Pasa del estado BLOCK al estado SUSP. BLOCK por timeout", pid);
+
+    return NULL;
+}
+
 t_mutex_proceso *BuscarMutex(char *nombre)
 {
     pthread_mutex_lock(&mutex_lista_mutex);
@@ -877,6 +1153,7 @@ void Cleanup()
     // cerrar socket del servidor y de kernel memory
     close(socket_servidor);
     close(socket_kernel_memory);
+    close(socket_km_eventos);
 
     // cerrar y liberar CPUs
     pthread_mutex_lock(&mutex_cpus);
@@ -978,6 +1255,10 @@ int main(int argc, char *argv[])
     EnviarOpCode(socket_kernel_memory, KERNEL_SCHEDULER);
     log_info(logger, "## Conectado a Kernel Memory");
 
+    // conexión secundaria para notificaciones espontáneas
+    socket_km_eventos = CrearConexion(ip_kernel_memory, puerto_kernel_memory);
+    EnviarOpCode(socket_km_eventos, KERNEL_SCHEDULER_EVENTOS);  // op code nuevo para identificarse
+
     // Inicializar colas
     cola_new = queue_create();
     cola_ready = queue_create();
@@ -989,15 +1270,20 @@ int main(int argc, char *argv[])
     IniciarServidorMultihilo();
 
     // Crear hilos de planificación
-    pthread_t hilo_largo, hilo_corto;
+    pthread_t hilo_largo, hilo_corto, hilo_mediano, hilo_km;
     pthread_create(&hilo_largo, NULL, PlanificadorLargoPlazo, NULL);
     pthread_create(&hilo_corto, NULL, PlanificadorCortoPlazo, NULL);
+    pthread_create(&hilo_mediano, NULL, PlanificadorMedianoPlazo, NULL);
+    // Crear hilo para eventos del kernel memory 
+    pthread_create(&hilo_km, NULL, EscucharKernelMemory, NULL);
+    pthread_detach(hilo_km);
 
     IniciarProceso(0, path_proceso_inicial);
 
     // Esperar (el programa sigue corriendo)
     pthread_join(hilo_largo, NULL);
     pthread_join(hilo_corto, NULL);
+    pthread_join(hilo_mediano, NULL);
 
     Cleanup();
     return 0;

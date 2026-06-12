@@ -20,8 +20,9 @@ typedef struct
     char* codigo;
     t_estado estado;
     int prioridad;
-    int dir_logica_io;
+    int dir_fisica_io;
     int tamanio_io;
+    time_t tiempo_suspension;
 } proceso;
 
 typedef struct
@@ -50,6 +51,10 @@ typedef struct {
     pthread_mutex_t mutex_syscall;
 } t_mutex_proceso;
 
+typedef struct {
+    int pid;
+} t_args_suspension;
+
 void IniciarSemaforos();
 void ObtenerConfig();
 void IniciarServidorMultihilo();
@@ -69,7 +74,7 @@ char* NombreEstado(t_estado estado);
 void CambiarEstado(proceso* p, t_estado nuevo_estado);
 proceso* BuscarProceso(int pid);
 void EjecutarBSOD();
-//void *EscucharKernelMemory(void* args);
+void *EscucharKernelMemory(void* args);
 void *HiloQuantum(void *args);
 t_mutex_proceso *BuscarMutex(char *nombre);
 void Cleanup();
