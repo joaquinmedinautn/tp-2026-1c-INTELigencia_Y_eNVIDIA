@@ -18,8 +18,11 @@ typedef struct
     int pid;
     int tamanio;
     char* codigo;
+    bool codigo_dinamico;  // true si codigo fue alocado con strdup/malloc
     t_estado estado;
     int prioridad;
+    int prioridad_original;
+    bool prioridad_heredada;
     int dir_fisica_io;
     int tamanio_io;
     time_t tiempo_suspension;
@@ -65,8 +68,8 @@ void RegistrarIO(int socket_cliente);
 void *AtenderCPU(void* args);
 void *AtenderIO(void* args);
 void *PlanificadorLargoPlazo(void* args);
+void *PlanificadorMedianoPlazo(void *args);
 void *PlanificadorCortoPlazo(void* args);
-void EnviarPIDaCPU(t_cpu_conectada* cpu);
 void ProcesarSyscall(t_cpu_conectada* cpu);
 void EnviarAIO(char* tipo_buscado, int operacion, int pid, void* params);
 void IniciarProceso(int tamanio, char *codigo);
@@ -76,7 +79,14 @@ proceso* BuscarProceso(int pid);
 void EjecutarBSOD();
 void *EscucharKernelMemory(void* args);
 void *HiloQuantum(void *args);
+void *HiloSuspension(void *args);
 t_mutex_proceso *BuscarMutex(char *nombre);
+void IntentarDesalojoPorPrioridad(proceso *nuevo);
+void EncolarReady(proceso *p);
+void CambiarPrioridadProceso(proceso *p, int nueva_prioridad);
+void IniciarCompactacion();
+void EncolarReadyAlPrincipio(proceso *p);
+void FinalizarCompactacion();
 void Cleanup();
 
 #endif

@@ -14,17 +14,25 @@ int rr_quantum;
 bool quantum_activo = false;
 char *algoritmo;
 int suspension_timeout;
+int siguiente_pid = 1;
+char *planification_algorithm; // FIFO, RR o CMN
+char **queues_algorithms;      // algoritmo de cada cola
+int cantidad_colas;
+bool queue_preemption;
+bool compactacion_en_curso = false;
+int cpus_a_esperar = 0;
 t_log *logger;
 t_log_level log_level;
 t_queue *cola_new;
-t_queue *cola_ready;
 t_queue *cola_block;
 t_queue *cola_susp_block;
 t_queue *cola_susp_ready;
+t_queue **colas_ready;
 sem_t sem_new;
 sem_t sem_ready;
 sem_t sem_cpu_disponible;
 sem_t sem_memoria_disponible;
+sem_t sem_cpus_desalojadas; // cuenta cuántas CPUs confirmaron el desalojo
 pthread_mutex_t mutex_ready;
 pthread_mutex_t mutex_new;
 pthread_mutex_t mutex_cpus;
@@ -35,6 +43,9 @@ pthread_mutex_t mutex_susp;
 pthread_mutex_t mutex_kernel_memory;
 pthread_mutex_t mutex_quantum;
 pthread_mutex_t mutex_lista_mutex;
+pthread_mutex_t mutex_pid;
+pthread_mutex_t *mutex_colas_ready;
+pthread_mutex_t mutex_compactacion;
 t_list *lista_cpus;
 t_list *lista_ios;
 t_list *lista_procesos;
@@ -51,7 +62,33 @@ void ObtenerConfig(char *archivo_config)
     algoritmo = strdup(config_get_string_value(config, "QUEUES_ALGORITHMS"));
     suspension_timeout = config_get_int_value(config, "SUSPENSION_TIMEOUT");
 
-    config_destroy(config);
+    planification_algorithm = strdup(config_get_string_value(config, "PLANIFICATION_ALGORITHM"));
+
+    if (strcmp(planification_algorithm, "CMN") == 0)
+    {
+        char **lista = config_get_array_value(config, "QUEUES_ALGORITHMS");
+
+        cantidad_colas = 0;
+        while (lista[cantidad_colas] != NULL)
+            cantidad_colas++;
+
+        queues_algorithms = malloc(sizeof(char *) * cantidad_colas);
+        for (int i = 0; i < cantidad_colas; i++)
+            queues_algorithms[i] = strdup(lista[i]);
+
+        string_array_destroy(lista);
+
+        char *preemption = config_get_string_value(config, "QUEUE_PREEMPTION");
+        queue_preemption = (strcmp(preemption, "TRUE") == 0);
+    }
+    else
+    {
+        // FIFO o RR: una sola cola, sin preemption
+        cantidad_colas = 1;
+        queues_algorithms = malloc(sizeof(char *));
+        queues_algorithms[0] = strdup(planification_algorithm);
+        queue_preemption = false;
+    }
 }
 
 void IniciarSemaforos()
@@ -60,6 +97,7 @@ void IniciarSemaforos()
     sem_init(&sem_ready, 0, 0);
     sem_init(&sem_cpu_disponible, 0, 0); // Inicialmente en 0, se incrementa cuando hay CPUs
     sem_init(&sem_memoria_disponible, 0, 0);
+    sem_init(&sem_cpus_desalojadas, 0, 0);
     pthread_mutex_init(&mutex_ready, NULL);
     pthread_mutex_init(&mutex_cpus, NULL);
     pthread_mutex_init(&mutex_ios, NULL);
@@ -68,6 +106,8 @@ void IniciarSemaforos()
     pthread_mutex_init(&mutex_susp, NULL);
     pthread_mutex_init(&mutex_kernel_memory, NULL);
     pthread_mutex_init(&mutex_lista_mutex, NULL);
+    pthread_mutex_init(&mutex_pid, NULL);
+    pthread_mutex_init(&mutex_compactacion, NULL);
 }
 
 // Procesar una syscall de la CPU
@@ -246,6 +286,13 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
 
         log_info(logger, "## (%d) Libera el Mutex %s", pid, nombre_mutex);
 
+        // restaurar prioridad heredada si la tenía
+        if (p->prioridad_heredada)
+        {
+            CambiarPrioridadProceso(p, p->prioridad_original);
+            p->prioridad_heredada = false;
+        }
+
         pthread_mutex_lock(&m->mutex_syscall);
         if (!queue_is_empty(m->cola_espera))
         {
@@ -261,11 +308,7 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
             list_remove_element(cola_block->elements, siguiente);
             pthread_mutex_unlock(&mutex_block);
 
-            pthread_mutex_lock(&mutex_ready);
-            queue_push(cola_ready, siguiente);
-            pthread_mutex_unlock(&mutex_ready);
-
-            sem_post(&sem_ready);
+            EncolarReady(siguiente);
         }
         else
         {
@@ -347,6 +390,8 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
         list_remove_element(lista_procesos, p);
         pthread_mutex_unlock(&mutex_procesos);
 
+        if (p->codigo_dinamico)
+            free(p->codigo);
         free(p);
 
         // liberar la CPU
@@ -356,6 +401,48 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
 
         // EXIT libera memoria también
         sem_post(&sem_memoria_disponible);
+    }
+    else if (strcmp(syscall_nombre, "INIT_PROC") == 0)
+    {
+        char archivo_instrucciones[100];
+        int prioridad_nuevo;
+
+        recv(cpu->socket, archivo_instrucciones, sizeof(archivo_instrucciones), MSG_WAITALL);
+        recv(cpu->socket, &prioridad_nuevo, sizeof(int), MSG_WAITALL);
+
+        // asignar nuevo PID
+        pthread_mutex_lock(&mutex_pid);
+        int nuevo_pid = siguiente_pid++;
+        pthread_mutex_unlock(&mutex_pid);
+
+        proceso *nuevo = malloc(sizeof(proceso));
+        nuevo->pid = nuevo_pid;
+        nuevo->tamanio = 0;
+        nuevo->codigo = strdup(archivo_instrucciones); // copia propia, no apunta al buffer del socket
+        nuevo->codigo_dinamico = true;
+        nuevo->prioridad = prioridad_nuevo;
+        nuevo->prioridad_heredada = false;
+        nuevo->estado = NEW;
+        nuevo->dir_fisica_io = 0;
+        nuevo->tamanio_io = 0;
+        nuevo->tiempo_suspension = 0;
+
+        pthread_mutex_lock(&mutex_procesos);
+        list_add(lista_procesos, nuevo);
+        pthread_mutex_unlock(&mutex_procesos);
+
+        pthread_mutex_lock(&mutex_new);
+        queue_push(cola_new, nuevo);
+        pthread_mutex_unlock(&mutex_new);
+
+        log_info(logger, "## (%d) Se crea el proceso - Estado: NEW", nuevo->pid);
+
+        sem_post(&sem_new); // despertar al planificador de largo plazo
+
+        // el proceso que hizo INIT_PROC vuelve a la MISMA CPU
+        CambiarEstado(p, EXEC);
+        cpu->ocupado = true;
+        cpu->pid_actual = p->pid;
     }
 }
 
@@ -419,30 +506,6 @@ void EnviarAIO(char *tipo_buscado, int operacion, int pid, void *params)
     }
 
     EnviarPaquete(paquete, io_destino->socket);
-    EliminarPaquete(paquete);
-}
-
-// Enviar PID a CPU (cuando la CPU pide trabajo)
-void EnviarPIDaCPU(t_cpu_conectada *cpu)
-{
-    pthread_mutex_lock(&mutex_ready);
-    if (queue_is_empty(cola_ready))
-    {
-        pthread_mutex_unlock(&mutex_ready);
-        // No hay procesos, enviar código de espera
-        EnviarOpCode(cpu->socket, KERNEL_NO_HAY_PROCESOS);
-        return;
-    }
-
-    proceso *p = queue_pop(cola_ready);
-    pthread_mutex_unlock(&mutex_ready);
-
-    cpu->ocupado = true;
-    cpu->pid_actual = p->pid;
-
-    t_paquete *paquete = CrearPaquete(KERNEL_ENVIA_PID);
-    AgregarAPaquete(paquete, &(p->pid), sizeof(int));
-    EnviarPaquete(paquete, cpu->socket);
     EliminarPaquete(paquete);
 }
 
@@ -597,16 +660,24 @@ void *AtenderCPU(void *args)
                 quantum_activo = false;
                 pthread_mutex_unlock(&mutex_quantum);
 
-                CambiarEstado(p, READY);
-
-                pthread_mutex_lock(&mutex_ready);
-                queue_push(cola_ready, p);
-                pthread_mutex_unlock(&mutex_ready);
-
-                sem_post(&sem_ready);
                 cpu->ocupado = false;
                 cpu->pid_actual = -1;
-                sem_post(&sem_cpu_disponible);
+                
+                pthread_mutex_lock(&mutex_compactacion);
+                bool en_compactacion = compactacion_en_curso;
+                pthread_mutex_unlock(&mutex_compactacion);
+
+                if (en_compactacion)
+                {
+                    // desalojado por compactación: va al PRINCIPIO de su cola, no libera CPU todavía
+                    EncolarReadyAlPrincipio(p);
+                    sem_post(&sem_cpus_desalojadas); // confirmar a IniciarCompactacion
+                }
+                else
+                {
+                    EncolarReady(p);
+                    sem_post(&sem_cpu_disponible);
+                }
             }
             break;
 
@@ -676,11 +747,7 @@ void *AtenderIO(void *args)
             }
             else
             {
-                CambiarEstado(p, READY);
-                pthread_mutex_lock(&mutex_ready);
-                queue_push(cola_ready, p);
-                pthread_mutex_unlock(&mutex_ready);
-                sem_post(&sem_ready);
+                EncolarReady(p);
                 log_info(logger, "## (%d) finalizó IO y pasa a READY", p->pid);
             }
         }
@@ -748,9 +815,13 @@ void *EscucharKernelMemory(void *args)
             sem_post(&sem_memoria_disponible);
             break;
 
+        case SOLICITUD_COMPACTACION:
+            IniciarCompactacion();
+            break;
+
         case FIN_COMPACTACION:
             log_info(logger, "## Fin de compactación");
-            // desbloquear CPUs y reanudar planificación
+            FinalizarCompactacion();
             sem_post(&sem_memoria_disponible);
             break;
 
@@ -793,21 +864,15 @@ void *PlanificadorLargoPlazo(void *args)
         else if (respuesta_memoria == PROCESO_CARGADO)
         {
             log_info(logger, "## (%d) Se crea el proceso - Estado: NEW", p->pid);
-
-            CambiarEstado(p, READY);
-            pthread_mutex_lock(&mutex_ready);
-            queue_push(cola_ready, p);
-            pthread_mutex_unlock(&mutex_ready);
-            log_info(logger, "Se añade el proceso %d a READY", p->pid);
-
-            sem_post(&sem_ready);
+            EncolarReady(p);
         }
         else if (respuesta_memoria == ESPACIO_INSUFICIENTE)
         {
             log_info(logger, "No hay espacio suficiente para el proceso %d con tamaño %d",
                      p->pid, p->tamanio);
             // En un caso real, habría que manejar esto (suspender, etc.)
-            queue_pop(cola_new); // Sacarlo de NEW
+            if (p->codigo_dinamico)
+                free(p->codigo);
             free(p);
         }
     }
@@ -880,11 +945,7 @@ void *PlanificadorMedianoPlazo(void *args)
                 else if (p->estado == SUSP_READY)
                 {
                     // IO ya terminó → READY
-                    CambiarEstado(p, READY);
-                    pthread_mutex_lock(&mutex_ready);
-                    queue_push(cola_ready, p);
-                    pthread_mutex_unlock(&mutex_ready);
-                    sem_post(&sem_ready);
+                    EncolarReady(p);
                 }
             }
             else
@@ -920,6 +981,17 @@ void *PlanificadorCortoPlazo(void *args)
         sem_wait(&sem_ready);
         sem_wait(&sem_cpu_disponible); // Esperar a que haya una CPU libre
 
+        pthread_mutex_lock(&mutex_compactacion);
+        if (compactacion_en_curso)
+        {
+            pthread_mutex_unlock(&mutex_compactacion);
+            sem_post(&sem_ready);
+            sem_post(&sem_cpu_disponible);
+            usleep(10000);
+            continue;
+        }
+        pthread_mutex_unlock(&mutex_compactacion);
+
         // Buscar una CPU libre
         pthread_mutex_lock(&mutex_cpus);
         t_cpu_conectada *cpu_libre = NULL;
@@ -936,16 +1008,34 @@ void *PlanificadorCortoPlazo(void *args)
 
         if (cpu_libre == NULL)
         {
-            // No debería pasar porque sem_cpu_disponible lo controla
+            sem_post(&sem_ready); // No debería pasar porque sem_cpu_disponible lo controla
             continue;
         }
 
-        // Sacar proceso de READY
-        pthread_mutex_lock(&mutex_ready);
-        proceso *p = queue_pop(cola_ready);
-        pthread_mutex_unlock(&mutex_ready);
+        // buscar el proceso de mayor prioridad disponible
+        proceso *p = NULL;
+        int cola_elegida = -1;
 
-        // Marcar CPU como ocupada
+        for (int i = 0; i < cantidad_colas; i++)
+        {
+            pthread_mutex_lock(&mutex_colas_ready[i]);
+            if (!queue_is_empty(colas_ready[i]))
+            {
+                p = queue_pop(colas_ready[i]);
+                cola_elegida = i;
+                pthread_mutex_unlock(&mutex_colas_ready[i]);
+                break;
+            }
+            pthread_mutex_unlock(&mutex_colas_ready[i]);
+        }
+
+        if (p == NULL)
+        {
+            // alguien más lo tomó primero
+            sem_post(&sem_cpu_disponible);
+            continue;
+        }
+
         cpu_libre->ocupado = true;
         cpu_libre->pid_actual = p->pid;
 
@@ -961,8 +1051,8 @@ void *PlanificadorCortoPlazo(void *args)
 
         log_info(logger, "## (%d) Enviado a CPU %d", p->pid, cpu_libre->id_cpu);
 
-        // si es RR, lanzar el timer
-        if (strcmp(algoritmo, "RR") == 0)
+        // RR según el algoritmo de ESA cola, no global
+        if (strcmp(queues_algorithms[cola_elegida], "RR") == 0)
         {
             pthread_mutex_lock(&mutex_quantum);
             quantum_activo = true;
@@ -977,6 +1067,7 @@ void *PlanificadorCortoPlazo(void *args)
             pthread_detach(hilo_q);
         }
     }
+    return NULL;
 }
 
 void IniciarProceso(int tamanio, char *codigo)
@@ -986,7 +1077,9 @@ void IniciarProceso(int tamanio, char *codigo)
     proc_inicial->pid = 0;
     proc_inicial->tamanio = 0; // el tamaño lo maneja Kernel Memory con el archivo
     proc_inicial->codigo = path_proceso_inicial;
+    proc_inicial->codigo_dinamico = false;
     proc_inicial->prioridad = 0;
+    proc_inicial->prioridad_heredada = false;
     proc_inicial->estado = NEW;
 
     pthread_mutex_lock(&mutex_procesos);
@@ -1142,6 +1235,146 @@ t_mutex_proceso *BuscarMutex(char *nombre)
     return resultado;
 }
 
+void EncolarReady(proceso *p)
+{
+    int prio = p->prioridad;
+
+    if (prio < 0 || prio >= cantidad_colas)
+    {
+        log_error(logger, "## (%d) prioridad %d fuera de rango, no planificado", p->pid, prio);
+        return;
+    }
+
+    CambiarEstado(p, READY);
+
+    pthread_mutex_lock(&mutex_colas_ready[prio]);
+    queue_push(colas_ready[prio], p);
+    pthread_mutex_unlock(&mutex_colas_ready[prio]);
+
+    sem_post(&sem_ready);
+
+    if (strcmp(planification_algorithm, "CMN") == 0 && queue_preemption)
+        IntentarDesalojoPorPrioridad(p);
+}
+
+void IntentarDesalojoPorPrioridad(proceso *nuevo)
+{
+    pthread_mutex_lock(&mutex_cpus);
+    for (int i = 0; i < list_size(lista_cpus); i++)
+    {
+        t_cpu_conectada *cpu = list_get(lista_cpus, i);
+        if (cpu->ocupado)
+        {
+            proceso *ejecutando = BuscarProceso(cpu->pid_actual);
+            if (ejecutando != NULL && ejecutando->prioridad > nuevo->prioridad)
+            {
+                log_info(logger,
+                         "## (%d) Prioridad: %d - Desalojado por cola más prioritaria por el proceso %d con prioridad %d",
+                         ejecutando->pid, ejecutando->prioridad, nuevo->pid, nuevo->prioridad);
+
+                EnviarOpCode(cpu->socket, INTERRUPCION_DESALOJO_COLA);
+                break; // solo se desaloja 1 CPU por evento
+            }
+        }
+    }
+    pthread_mutex_unlock(&mutex_cpus);
+}
+
+void CambiarPrioridadProceso(proceso *p, int nueva_prioridad)
+{
+    int prioridad_vieja = p->prioridad;
+    if (prioridad_vieja == nueva_prioridad)
+        return;
+
+    log_info(logger, "## %d Cambio de prioridad: %d - %d", p->pid, prioridad_vieja, nueva_prioridad);
+
+    if (p->estado == READY && strcmp(planification_algorithm, "CMN") == 0)
+    {
+        pthread_mutex_lock(&mutex_colas_ready[prioridad_vieja]);
+        list_remove_element(colas_ready[prioridad_vieja]->elements, p);
+        pthread_mutex_unlock(&mutex_colas_ready[prioridad_vieja]);
+
+        p->prioridad = nueva_prioridad;
+
+        pthread_mutex_lock(&mutex_colas_ready[nueva_prioridad]);
+        queue_push(colas_ready[nueva_prioridad], p);
+        pthread_mutex_unlock(&mutex_colas_ready[nueva_prioridad]);
+    }
+    else
+    {
+        p->prioridad = nueva_prioridad;
+    }
+}
+
+void IniciarCompactacion()
+{
+    log_info(logger, "## Inicio de compactación");
+
+    // bloquear el envío de nuevos procesos
+    pthread_mutex_lock(&mutex_compactacion);
+    compactacion_en_curso = true;
+    pthread_mutex_unlock(&mutex_compactacion);
+
+    // contar y desalojar CPUs ocupadas
+    pthread_mutex_lock(&mutex_cpus);
+    cpus_a_esperar = 0;
+    for (int i = 0; i < list_size(lista_cpus); i++)
+    {
+        t_cpu_conectada *cpu = list_get(lista_cpus, i);
+        if (cpu->ocupado)
+        {
+            cpus_a_esperar++;
+            EnviarOpCode(cpu->socket, INTERRUPCION_COMPACTACION);
+        }
+    }
+    pthread_mutex_unlock(&mutex_cpus);
+
+    // esperar a que cada CPU desalojada confirme la devolución del proceso
+    for (int i = 0; i < cpus_a_esperar; i++)
+        sem_wait(&sem_cpus_desalojadas);
+
+    // avisar a Kernel Memory que ya puede compactar
+    EnviarOpCode(socket_km_eventos, CPUS_DESALOJADAS);
+}
+
+void EncolarReadyAlPrincipio(proceso *p)
+{
+    int prio = p->prioridad;
+
+    if (prio < 0 || prio >= cantidad_colas)
+    {
+        log_error(logger, "## (%d) prioridad %d fuera de rango, no planificado", p->pid, prio);
+        return;
+    }
+
+    CambiarEstado(p, READY);
+
+    pthread_mutex_lock(&mutex_colas_ready[prio]);
+    // queue no tiene push_front, usamos la lista interna
+    list_add_in_index(colas_ready[prio]->elements, 0, p);
+    pthread_mutex_unlock(&mutex_colas_ready[prio]);
+
+    sem_post(&sem_ready);
+}
+
+void FinalizarCompactacion()
+{
+    log_info(logger, "## Fin de compactación");
+
+    pthread_mutex_lock(&mutex_compactacion);
+    compactacion_en_curso = false;
+    pthread_mutex_unlock(&mutex_compactacion);
+
+    // las CPUs desalojadas quedaron libres, reactivar el corto plazo
+    pthread_mutex_lock(&mutex_cpus);
+    for (int i = 0; i < cpus_a_esperar; i++)
+        sem_post(&sem_cpu_disponible);
+    pthread_mutex_unlock(&mutex_cpus);
+
+    // hay memoria disponible tras compactar
+    sem_post(&sem_memoria_disponible);
+}
+
 void Cleanup()
 {
     log_info(logger, "## Iniciando limpieza de recursos...");
@@ -1182,6 +1415,8 @@ void Cleanup()
     for (int i = 0; i < list_size(lista_procesos); i++)
     {
         proceso *p = list_get(lista_procesos, i);
+        if (p->codigo_dinamico)
+            free(p->codigo);
         free(p);
     }
     list_destroy(lista_procesos);
@@ -1199,12 +1434,23 @@ void Cleanup()
     list_destroy(lista_mutex);
     pthread_mutex_unlock(&mutex_lista_mutex);
 
+    // libera el array de colas_ready
+    for (int i = 0; i < cantidad_colas; i++)
+    {
+        queue_destroy(colas_ready[i]);
+        pthread_mutex_destroy(&mutex_colas_ready[i]);
+        free(queues_algorithms[i]);
+    }
+
     // liberar colas
     queue_destroy(cola_new);
-    queue_destroy(cola_ready);
     queue_destroy(cola_block);
     queue_destroy(cola_susp_block);
     queue_destroy(cola_susp_ready);
+    free(colas_ready);
+    free(mutex_colas_ready);
+    free(queues_algorithms);
+    free(planification_algorithm);
 
     // destruir semáforos
     sem_destroy(&sem_new);
@@ -1257,11 +1503,18 @@ int main(int argc, char *argv[])
 
     // conexión secundaria para notificaciones espontáneas
     socket_km_eventos = CrearConexion(ip_kernel_memory, puerto_kernel_memory);
-    EnviarOpCode(socket_km_eventos, KERNEL_SCHEDULER_EVENTOS);  // op code nuevo para identificarse
+    EnviarOpCode(socket_km_eventos, KERNEL_SCHEDULER_EVENTOS); // op code nuevo para identificarse
 
     // Inicializar colas
     cola_new = queue_create();
-    cola_ready = queue_create();
+    colas_ready = malloc(sizeof(t_queue *) * cantidad_colas);
+    mutex_colas_ready = malloc(sizeof(pthread_mutex_t) * cantidad_colas);
+
+    for (int i = 0; i < cantidad_colas; i++)
+    {
+        colas_ready[i] = queue_create();
+        pthread_mutex_init(&mutex_colas_ready[i], NULL);
+    }
     cola_block = queue_create();
     cola_susp_block = queue_create();
     cola_susp_ready = queue_create();
@@ -1274,7 +1527,7 @@ int main(int argc, char *argv[])
     pthread_create(&hilo_largo, NULL, PlanificadorLargoPlazo, NULL);
     pthread_create(&hilo_corto, NULL, PlanificadorCortoPlazo, NULL);
     pthread_create(&hilo_mediano, NULL, PlanificadorMedianoPlazo, NULL);
-    // Crear hilo para eventos del kernel memory 
+    // Crear hilo para eventos del kernel memory
     pthread_create(&hilo_km, NULL, EscucharKernelMemory, NULL);
     pthread_detach(hilo_km);
 
