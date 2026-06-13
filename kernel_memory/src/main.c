@@ -4,8 +4,7 @@
 t_config *config;
 t_log_level log_level;
 t_log *logger;
-t_dictionary *procesos;
-pthread_mutex_t mutex_procesos;
+
 
 char* scripts_path;
 int socket_servidor;
@@ -17,12 +16,11 @@ int socket_swap;
 int socket_misterioso;
 int instruction_delay;
 
-void* memoria_principal;
-int tam_memoria;
+
 int segment_max_size;
 char* allocation_strategy;
 
-int socket_kernel_scheduler_eventos;
+int socket_kernel_scheduler_eventos = -1;
 
 
 int swap_block_size;
@@ -41,7 +39,32 @@ pthread_mutex_t mutex_tabla_segmentos;
 t_dictionary* procesos;
 pthread_mutex_t mutex_procesos;
 
+t_list* lista_memory_sticks;
+pthread_mutex_t mutex_memory_sticks;
+
 t_list* segmentos_a_compactar;
+
+
+void manejo_de_memoria_corrupta(){
+    log_error(logger, "Un Memory Stick falló");
+    if (socket_kernel_scheduler_eventos != -1){
+        EnviarOpCode(socket_kernel_scheduler_eventos, MEMORIA_CORRUPTA);
+    }
+}
+
+t_memory_stick* buscar_stick_por_direccion(uint32_t dir_fisica){
+    pthread_mutex_lock(&mutex_memory_sticks);
+    for(int i = 0; i < list_size(lista_memory_sticks); i++){
+        t_memory_stick* stick = list_get(lista_memory_sticks, i);
+        if (dir_fisica >= stick->base_global && dir_fisica < stick->limite){
+            pthread_mutex_unlock(&mutex_memory_sticks);
+            return stick;
+        }
+    }
+        pthread_mutex_unlock(&mutex_memory_sticks);
+        return NULL;
+}
+
 
 bool ordenar_huecos_por_base(void* a, void* b){
     t_hueco_libre* h1 = (t_hueco_libre*) a;
@@ -94,9 +117,9 @@ int traducir_direccion_logica(uint32_t pid, uint32_t dir_logica, uint32_t tamani
 
     // busco la tabla de segmentos del PID en el diccionario
     char* key = string_itoa(pid);
-    pthread_mutex_lock(&mutex_procesos);
+    pthread_mutex_lock(&mutex_tabla_segmentos);
     t_list* tabla = dictionary_get(tabla_segmentos, key);
-    pthread_mutex_unlock(&mutex_procesos);
+    pthread_mutex_unlock(&mutex_tabla_segmentos);
     free(key);
 
     if (tabla == NULL) {
@@ -159,18 +182,14 @@ void liberar_memoria_proceso(uint32_t pid){
 
 void InicarEstructurasMemoria(){
 
-    memoria_principal =malloc(tam_memoria);
-    memset(memoria_principal, 0, tam_memoria);
 
     lista_huecos_libres = list_create();
     pthread_mutex_init(&mutex_huecos, NULL);
 
-    t_hueco_libre* hueco_inicial= malloc(sizeof(t_hueco_libre));
-    hueco_inicial->base=0;
-    hueco_inicial->tamanio = tam_memoria;
-    list_add(lista_huecos_libres,hueco_inicial);
+    lista_memory_sticks = list_create();
+    pthread_mutex_init(&mutex_memory_sticks, NULL); 
     
-    log_info(logger, "## Estructuras de Memoria iniciadas. Tamaño: %d, bytes", tam_memoria);
+    log_info(logger, "## Estructuras de Memoria iniciadas. Esperando Memory Sticks.");
 }
 
 void ObtenerConfig() {
@@ -183,7 +202,6 @@ void ObtenerConfig() {
     instruction_delay = config_get_int_value(config, "INSTRUCTION_DELAY");
     scripts_path = string_duplicate(config_get_string_value(config, "SCRIPTS_BASEPATH"));
 
-    tam_memoria = config_get_int_value(config, "TAM_MEMORIA");
     segment_max_size = config_get_int_value(config, "SEGMENT_MAX_SIZE");
     allocation_strategy = string_duplicate(config_get_string_value(config, "ALLOCATION_STRATEGY" ));
 
@@ -241,10 +259,31 @@ void suspender_proceso(uint32_t pid){
                     bytes_a_enviar = seg->tamanio - offset_segmento;
                 }
 
-                //  leo de RAM y mandar al SWAP ESCRITURA_BLOQUE
+                uint32_t dir_fisica_leer = seg->base + offset_segmento;
+                t_memory_stick* stick =buscar_stick_por_direccion(dir_fisica_leer);
+
+                // leo de RAM y mandar al SWAP ESCRITURA_BLOQUE
                 void* buffer_bloque = malloc(swap_block_size);
                 memset(buffer_bloque, 0, swap_block_size); // lleno con ceros por las dudas
-                memcpy(buffer_bloque, memoria_principal + seg->base + offset_segmento, bytes_a_enviar);
+                
+                if(stick != NULL){
+                    uint32_t offset_local = dir_fisica_leer - stick->base_global;
+                    t_paquete* paq_leer = CrearPaquete(LECTURA_BLOQUE);
+                    AgregarAPaquete(paq_leer,  &offset_local, sizeof(uint32_t));
+                    AgregarAPaquete(paq_leer, &bytes_a_enviar, sizeof(uint32_t));
+                    EnviarPaquete(paq_leer, stick->socket);
+                    EliminarPaquete(paq_leer);
+                
+                    if(RecibirOperacion(stick->socket) == LECTURA_BLOQUE){
+                    t_list* resp = RecibirPaquete(stick->socket);
+                    memcpy(buffer_bloque, list_get(resp, 0), bytes_a_enviar);
+                    list_clean_and_destroy_elements(resp, free);
+                    } else {
+                    manejo_de_memoria_corrupta();
+                    }
+                } else {
+                    manejo_de_memoria_corrupta();
+                }
 
                 t_paquete* paq_swap = CrearPaquete(ESCRITURA_BLOQUE); 
                 AgregarAPaquete(paq_swap, &bloque_libre, sizeof(int));
@@ -337,10 +376,26 @@ void desuspender_proceso(uint32_t pid, int socket_cliente) {
                         bytes_a_copiar = seg->tamanio - offset_segmento;
                     }
 
-                    // copio a la RAM real
-                    memcpy(memoria_principal + seg->base + offset_segmento, datos_bloque, bytes_a_copiar);
-                    offset_segmento += bytes_a_copiar;
+                    uint32_t dir_fisica_escribir =  seg->base + offset_segmento;
+                    t_memory_stick* stick = buscar_stick_por_direccion(dir_fisica_escribir);
 
+                    if(stick != NULL){
+                    uint32_t offset_local = dir_fisica_escribir - stick->base_global;
+                    t_paquete* paq_escribir = CrearPaquete(ESCRITURA_DATOS);
+                    AgregarAPaquete(paq_escribir,  &offset_local, sizeof(uint32_t));
+                    AgregarAPaquete(paq_escribir, &bytes_a_copiar, sizeof(uint32_t));
+                    AgregarAPaquete(paq_escribir, datos_bloque, bytes_a_copiar);
+                    EnviarPaquete(paq_escribir, stick->socket);
+                    EliminarPaquete(paq_escribir);
+                    
+                        if(RecibirOperacion(stick->socket) !=  MENSAJE){
+                     manejo_de_memoria_corrupta();
+                    }
+                    } else {
+                    manejo_de_memoria_corrupta();
+                    }
+
+                    offset_segmento += bytes_a_copiar;
                     list_destroy_and_destroy_elements(valores_bloque, free);
                 }
 
@@ -386,35 +441,63 @@ void compactar_memoria() {
 
     // empujo todos los segmentos hacia el principio (Base 0)
     uint32_t desplazamiento_actual = 0; 
-    void* buffer_temporal = malloc(tam_memoria); 
+
 
     for (int i = 0; i < list_size(segmentos_a_compactar); i++) {
         t_segmento* seg = list_get(segmentos_a_compactar, i);
         
-        memcpy(buffer_temporal + desplazamiento_actual, memoria_principal + seg->base, seg->tamanio);
-        seg->base = desplazamiento_actual;
+        if (seg->base != desplazamiento_actual){
+        t_memory_stick* stick_origen = buscar_stick_por_direccion(seg->base);
+        uint32_t offset_origen = seg->base - stick_origen->base_global;
+        
+        t_paquete* p_leer = CrearPaquete(LECTURA_DATOS);
+        AgregarAPaquete(p_leer,  &offset_origen, sizeof(uint32_t));
+        AgregarAPaquete(p_leer, &seg->tamanio, sizeof(uint32_t));
+        EnviarPaquete(p_leer, stick_origen->socket);
+        EliminarPaquete(p_leer);
+
+        RecibirOperacion(stick_origen->socket);
+        t_list* resp = RecibirPaquete(stick_origen->socket);
+        void* buffer_temp = list_get(resp, 0);
+
+        t_memory_stick*  stick_destino = buscar_stick_por_direccion(desplazamiento_actual);
+        uint32_t offset_destino = desplazamiento_actual - stick_destino->base_global;
+
+        t_paquete* p_escribir = CrearPaquete(ESCRITURA_DATOS);
+        AgregarAPaquete(p_escribir,  &offset_destino, sizeof(uint32_t));
+        AgregarAPaquete(p_escribir, &seg->tamanio, sizeof(uint32_t));
+        AgregarAPaquete(p_escribir, buffer_temp, seg->tamanio);
+        EnviarPaquete(p_escribir, stick_destino->socket);
+        EliminarPaquete(p_escribir);
+
+        RecibirOperacion(stick_destino->socket);
+
+        list_clean_and_destroy_elements(resp,free);
+        seg->base  =  desplazamiento_actual;
+        }
         
         log_info(logger, "## PID: %d - Segmento: %d - Base: %d - Tamaño: %d", seg->pid, seg->id_segmento, seg->base, seg->tamanio);
         
         desplazamiento_actual += seg->tamanio;
     }
-
-    // vuelco a la RAM real
-    memcpy(memoria_principal, buffer_temporal, desplazamiento_actual);
-    free(buffer_temporal);
     list_destroy(segmentos_a_compactar);
 
     // destruyo la vieja lista de huecos y crear uno solo al final
     pthread_mutex_lock(&mutex_huecos);
     list_clean_and_destroy_elements(lista_huecos_libres, free);
-    
-    t_hueco_libre* hueco_final = malloc(sizeof(t_hueco_libre));
-    hueco_final->base = desplazamiento_actual;
-    hueco_final->tamanio = tam_memoria - desplazamiento_actual;
-    list_add(lista_huecos_libres, hueco_final);
-    pthread_mutex_unlock(&mutex_huecos);
 
-    log_info(logger, "## Compactación finalizada. Hueco libre restante: %d bytes en Base %d", hueco_final->tamanio, hueco_final->base);
+    uint32_t ram_total = 0;
+    for (int i=0; i<list_size(lista_memory_sticks);i++){
+        ram_total += ((t_memory_stick*)list_get(lista_memory_sticks,i))->tamanio;
+    }
+    if(ram_total > desplazamiento_actual){
+        t_hueco_libre* hueco_final = malloc(sizeof(t_hueco_libre));
+        hueco_final->base = desplazamiento_actual;
+        hueco_final->tamanio = ram_total - desplazamiento_actual;
+        list_add(lista_huecos_libres, hueco_final);
+         log_info(logger, "## Compactación finalizada. Hueco libre restante: %d bytes en Base %d", hueco_final->tamanio, hueco_final->base);
+    }
+    pthread_mutex_unlock(&mutex_huecos);
 }
 
 void registrar_nuevo_memory_stick(int tamanio_nuevo){
@@ -475,6 +558,39 @@ void atender_cliente(void* void_socket) {
             socket_kernel_scheduler_eventos = socket_cliente;
             log_info(logger, "## Kernel Scheduler Eventos Conectado");
             break;
+        }
+        case NUEVO_MEMORY_STICK:{
+            t_list* valores = RecibirPaquete(socket_cliente);
+            uint32_t tamanio_stick = *(uint32_t*)list_get(valores, 0);
+
+            pthread_mutex_lock(&mutex_memory_sticks);
+            uint32_t base_nueva = 0;
+            if (!list_is_empty(lista_memory_sticks)) {
+                t_memory_stick* ultimo = list_get(lista_memory_sticks, list_size(lista_memory_sticks) - 1);
+                base_nueva = ultimo->limite;
+            }
+
+            t_memory_stick* nuevo_stick = malloc(sizeof(t_memory_stick));
+            nuevo_stick->socket = socket_cliente;
+            nuevo_stick->tamanio = tamanio_stick;
+            nuevo_stick->base_global = base_nueva;
+            nuevo_stick->limite = base_nueva + tamanio_stick;
+            list_add(lista_memory_sticks, nuevo_stick);
+            pthread_mutex_unlock(&mutex_memory_sticks);
+
+            pthread_mutex_lock(&mutex_huecos);
+            t_hueco_libre* nuevo_hueco = malloc(sizeof(t_hueco_libre));
+            nuevo_hueco->base = base_nueva;
+            nuevo_hueco->tamanio = tamanio_stick;
+            list_add(lista_huecos_libres, nuevo_hueco);
+            pthread_mutex_unlock(&mutex_huecos);
+
+            log_info(logger, "## Memory Stick de %d bytes mapeado en base %d", tamanio_stick, base_nueva);
+            if (socket_kernel_scheduler_eventos != -1) {
+                EnviarOpCode(socket_kernel_scheduler_eventos, NUEVO_MEMORY_STICK);
+            }
+            list_destroy_and_destroy_elements(valores, free);
+            return;
         }
             
 
@@ -545,6 +661,61 @@ void atender_cliente(void* void_socket) {
                 list_destroy_and_destroy_elements(valores, free);
                 break;
             }
+            case SOLICITUD_CONTEXTO: {
+                t_list* valores = RecibirPaquete(socket_cliente);
+                uint32_t pid = *(uint32_t*)list_get(valores, 0);
+
+                char* key = string_itoa(pid);
+                pthread_mutex_lock(&mutex_procesos);
+                t_contexto* ctx = dictionary_get(procesos, key);
+                pthread_mutex_unlock(&mutex_procesos);
+                free(key);
+
+                if (ctx != NULL) {
+                    t_paquete* res = CrearPaquete(SOLICITUD_CONTEXTO);
+                    
+                    // mando el struct del contexto (los 11 registros clonados)
+                    // no mando la t_list de instrucciones por red, solo el bloque fijo de registros
+                    AgregarAPaquete(res, ctx, sizeof(t_contexto));
+                    
+                    EnviarPaquete(res, socket_cliente);
+                    EliminarPaquete(res);
+                    log_info(logger, "## Contexto enviado a CPU para PID: %d (PC: %d)", pid, ctx->PC);
+                } else {
+                    log_error(logger, "Error: CPU solicitó contexto para un PID inexistente: %d", pid);
+                    //  envio un código de error a la CPU
+                }
+
+                list_destroy_and_destroy_elements(valores, free);
+                break;
+            }
+            case CPU_A_KERNEL_MEMORY: { // el que usa la CPU en actualizar_contexto()
+                t_list* valores = RecibirPaquete(socket_cliente);
+                uint32_t pid = *(uint32_t*)list_get(valores, 0);
+                t_contexto* contexto_cpu = (t_contexto*)list_get(valores, 1);
+
+                char* key = string_itoa(pid);
+                pthread_mutex_lock(&mutex_procesos);
+                t_contexto* ctx_guardado = dictionary_get(procesos, key);
+                
+                if (ctx_guardado != NULL) {
+                    // copio los registros nuevos sobre el contexto viejo sin tocar su t_list de instrucciones
+                    ctx_guardado->PC = contexto_cpu->PC;
+                    ctx_guardado->AX = contexto_cpu->AX; ctx_guardado->BX = contexto_cpu->BX;
+                    ctx_guardado->CX = contexto_cpu->CX; ctx_guardado->DX = contexto_cpu->DX;
+                    ctx_guardado->EAX = contexto_cpu->EAX; ctx_guardado->EBX = contexto_cpu->EBX;
+                    ctx_guardado->ECX = contexto_cpu->ECX; ctx_guardado->EDX = contexto_cpu->EDX;
+                    ctx_guardado->SI = contexto_cpu->SI; ctx_guardado->DI = contexto_cpu->DI;
+                }
+                pthread_mutex_unlock(&mutex_procesos);
+                free(key);
+
+                log_info(logger, "## Contexto actualizado del PID: %d (Nuevo PC: %d)", pid, contexto_cpu->PC);
+
+                list_destroy_and_destroy_elements(valores, free);
+                break;
+            }
+
             case LEER: { 
                 t_list* valores = RecibirPaquete(socket_cliente);
                 uint32_t pid = *(uint32_t*)list_get(valores, 0);
@@ -559,15 +730,24 @@ void atender_cliente(void* void_socket) {
 
                 log_info(logger, "## PID: %d Lectura Dir. Física: %d Tamaño: %d", pid, dir_fisica, tamanio);
                 
-                void* buffer_leido =  malloc(tamanio);
-                memcpy(buffer_leido, memoria_principal + dir_fisica, tamanio);
+                t_memory_stick* stick = buscar_stick_por_direccion(dir_fisica);
+                    if (stick) {
+                        uint32_t offset = dir_fisica - stick->base_global;
+                        t_paquete* p = CrearPaquete(LECTURA_DATOS);
+                        AgregarAPaquete(p, &offset, sizeof(uint32_t));
+                        AgregarAPaquete(p, &tamanio, sizeof(uint32_t));
+                        EnviarPaquete(p, stick->socket);
+                        EliminarPaquete(p);
 
-                t_paquete* res = CrearPaquete(LEER);
-                AgregarAPaquete(res, buffer_leido, tamanio);
-                EnviarPaquete(res, socket_cliente);
-                
-                EliminarPaquete(res);
-                free(buffer_leido);
+                        if (RecibirOperacion(stick->socket) == LECTURA_DATOS) {
+                            t_list* resp = RecibirPaquete(stick->socket);
+                            t_paquete* res_final = CrearPaquete(LEER);
+                            AgregarAPaquete(res_final, list_get(resp, 0), tamanio);
+                            EnviarPaquete(res_final, socket_cliente);
+                            EliminarPaquete(res_final);
+                            list_destroy_and_destroy_elements(resp, free);
+                        } else manejo_de_memoria_corrupta();
+                    } else manejo_de_memoria_corrupta();
                 }
                 list_destroy_and_destroy_elements(valores, free);
                 break;
@@ -585,9 +765,19 @@ void atender_cliente(void* void_socket) {
                     EnviarOpCode(socket_cliente, SEGMENTATION_FAULT);
                 }else{log_info(logger, "## PID: %d Escritura Dir. Física: %d Tamaño: %d", pid, dir_fisica, tamanio); 
                 
-                memcpy(memoria_principal + dir_fisica, datos, tamanio),
-                
-                EnviarOpCode(socket_cliente, MENSAJE); 
+                t_memory_stick* stick = buscar_stick_por_direccion(dir_fisica);
+                    if (stick) {
+                        uint32_t offset = dir_fisica - stick->base_global;
+                        t_paquete* p = CrearPaquete(ESCRITURA_DATOS);
+                        AgregarAPaquete(p, &offset, sizeof(uint32_t));
+                        AgregarAPaquete(p, &tamanio, sizeof(uint32_t));
+                        AgregarAPaquete(p, datos, tamanio);
+                        EnviarPaquete(p, stick->socket);
+                        EliminarPaquete(p);
+
+                        if (RecibirOperacion(stick->socket) == MENSAJE) EnviarOpCode(socket_cliente, MENSAJE);
+                        else manejo_de_memoria_corrupta();
+                    } else manejo_de_memoria_corrupta();
                 }
                 list_destroy_and_destroy_elements(valores, free);
                 break;
@@ -773,7 +963,6 @@ int main(int argc, char *argv[])
     pthread_mutex_destroy(&mutex_procesos);
     free(scripts_path);
 
-    free(memoria_principal);
     free(allocation_strategy);
 
     if (bitmap_swap != NULL) bitarray_destroy(bitmap_swap);

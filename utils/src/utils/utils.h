@@ -43,6 +43,13 @@ typedef struct{
     uint32_t tamanio;
 } t_hueco_libre;
 
+typedef struct{
+    int socket;
+    uint32_t limite;
+    uint32_t tamanio; 
+    uint32_t base_global;
+} t_memory_stick;
+
 
 typedef enum {
     // CONEXION
@@ -72,6 +79,7 @@ typedef enum {
     DESUSPENDER_PROCESO,
     COMPACTAR_MEMORIA,
     MEMORIA_INSUFICIENTE,
+    SOLICITUD_CONTEXTO,
     
 
     // CPU y Planificacion
