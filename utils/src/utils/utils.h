@@ -71,6 +71,8 @@ typedef enum {
     ESCRIBIR,
     DESUSPENDER_PROCESO,
     COMPACTAR_MEMORIA,
+    MEMORIA_INSUFICIENTE,
+    
 
     // CPU y Planificacion
     CPU_SOLICITA_PID,
