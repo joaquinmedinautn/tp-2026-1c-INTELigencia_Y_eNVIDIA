@@ -25,6 +25,7 @@ void asignar_valor_registro(char* nombre, uint32_t valor);
 char* fetch();
 t_instruccion* decode(char* instruccion);
 int execute(t_instruccion* inst);
+void actualizar_contexto();
 int check_interrupt();
 
 // El loop principal

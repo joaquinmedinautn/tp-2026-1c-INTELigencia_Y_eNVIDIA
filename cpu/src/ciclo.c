@@ -36,6 +36,14 @@ void asignar_valor_registro(char* nombre, uint32_t valor) {
     if (strcmp(nombre, "DI") == 0)  { contexto.DI  = valor; return; }
 }
 
+void actualizar_contexto() {
+    t_paquete* paquete = CrearPaquete(CPU_A_KERNEL_MEMORY);
+    AgregarAPaquete(paquete, &pid_actual, sizeof(int));
+    AgregarAPaquete(paquete, &contexto, sizeof(t_contexto));
+    EnviarPaquete(paquete, socket_kernel_memory);
+    EliminarPaquete(paquete);
+}
+
 char* fetch() {
     // Le pedimos la instrucción al Kernel Memory
     // Le mandamos el PID y el PC actual
@@ -116,6 +124,8 @@ int execute(t_instruccion* inst) {
     AgregarAPaquete(paquete, &tiempo, sizeof(int));
     EnviarPaquete(paquete, socket_kernel_scheduler);
     EliminarPaquete(paquete);
+    contexto.PC++;
+    actualizar_contexto();
     return 2;
     }
     
@@ -127,8 +137,10 @@ int execute(t_instruccion* inst) {
     AgregarAPaquete(paquete, &prioridad, sizeof(int));
     EnviarPaquete(paquete, socket_kernel_scheduler);
     EliminarPaquete(paquete);
-    return 0;
-    }
+    contexto.PC++;
+    actualizar_contexto();
+    return 2;
+}
 
     else if (strcmp(inst->nombre, "MEM_ALLOC") == 0) {
     int id_segmento = atoi(inst->params[0]);
@@ -139,7 +151,10 @@ int execute(t_instruccion* inst) {
     AgregarAPaquete(paquete, &tamanio, sizeof(int));
     EnviarPaquete(paquete, socket_kernel_scheduler);
     EliminarPaquete(paquete);
-    return 0;
+
+    contexto.PC++;
+    actualizar_contexto();
+    return 2;
     }
 
     else if (strcmp(inst->nombre, "MEM_FREE") == 0) {
@@ -149,8 +164,10 @@ int execute(t_instruccion* inst) {
     AgregarAPaquete(paquete, &id_segmento, sizeof(int));
     EnviarPaquete(paquete, socket_kernel_scheduler);
     EliminarPaquete(paquete);
-    return 0;
-    }
+    contexto.PC++;
+    actualizar_contexto();
+    return 2;
+    }  
     
     else if (strcmp(inst->nombre, "MUTEX_CREATE") == 0) {
     t_paquete* paquete = CrearPaquete(CPU_SYSCALL);
@@ -158,7 +175,9 @@ int execute(t_instruccion* inst) {
     AgregarAPaquete(paquete, inst->params[0], strlen(inst->params[0]) + 1);
     EnviarPaquete(paquete, socket_kernel_scheduler);
     EliminarPaquete(paquete);
-    return 0;
+    contexto.PC++;
+    actualizar_contexto();
+    return 2;
     }
 
     else if (strcmp(inst->nombre, "MUTEX_LOCK") == 0) {
@@ -167,6 +186,8 @@ int execute(t_instruccion* inst) {
     AgregarAPaquete(paquete, inst->params[0], strlen(inst->params[0]) + 1);
     EnviarPaquete(paquete, socket_kernel_scheduler);
     EliminarPaquete(paquete);
+    contexto.PC++;
+    actualizar_contexto();
     return 2;
     }
 
@@ -176,8 +197,10 @@ int execute(t_instruccion* inst) {
     AgregarAPaquete(paquete, inst->params[0], strlen(inst->params[0]) + 1);
     EnviarPaquete(paquete, socket_kernel_scheduler);
     EliminarPaquete(paquete);
-    return 0;
-    }
+    contexto.PC++;
+    actualizar_contexto();
+    return 2;
+    }  
 
     else if (strcmp(inst->nombre, "STDIN") == 0) {
     uint32_t dir_logica = obtener_valor_registro(inst->params[0]);
@@ -188,6 +211,8 @@ int execute(t_instruccion* inst) {
     AgregarAPaquete(paquete, &tamanio, sizeof(uint32_t));
     EnviarPaquete(paquete, socket_kernel_scheduler);
     EliminarPaquete(paquete);
+    contexto.PC++;
+    actualizar_contexto();
     return 2;
     }   
     
@@ -200,6 +225,8 @@ int execute(t_instruccion* inst) {
     AgregarAPaquete(paquete, &tamanio, sizeof(uint32_t));
     EnviarPaquete(paquete, socket_kernel_scheduler);
     EliminarPaquete(paquete);
+    contexto.PC++;
+    actualizar_contexto();
     return 2;
 }
 
@@ -268,12 +295,7 @@ pthread_detach(hilo_interrupciones);
         if (check_interrupt()) {
     log_info(logger, "## Interrupcion recibida");
     
-    // 1. Guardamos el contexto en Kernel Memory
-    t_paquete* paquete = CrearPaquete(CPU_A_KERNEL_MEMORY);
-    AgregarAPaquete(paquete, &pid_actual, sizeof(int));
-    AgregarAPaquete(paquete, &contexto, sizeof(t_contexto));
-    EnviarPaquete(paquete, socket_kernel_memory);
-    EliminarPaquete(paquete);
+    actualizar_contexto();
 
     // 2. Devolvemos el PID al Scheduler con motivo INTERRUPCION
     t_paquete* paquete2 = CrearPaquete(CPU_PID_DEVUELTO);
