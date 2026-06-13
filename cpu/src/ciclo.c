@@ -261,17 +261,8 @@ void* escuchar_interrupciones(void* arg) {
 void iniciar_ciclo(int pid) {
     pid_actual = pid;
 
-    // Pedimos el contexto al Kernel Memory
-    t_paquete* paquete = CrearPaquete(SOLICITUD_INSTRUCCION);
-    AgregarAPaquete(paquete, &pid_actual, sizeof(int));
-    EnviarPaquete(paquete, socket_kernel_memory);
-    EliminarPaquete(paquete);
-
-    // Recibimos el contexto
-    int size;
-    void* buffer = RecibirBuffer(&size, socket_kernel_memory);
-    memcpy(&contexto, buffer, sizeof(t_contexto));
-    free(buffer);
+ // Inicializamos el contexto en 0 (proceso nuevo)
+memset(&contexto, 0, sizeof(t_contexto));
 
     pthread_t hilo_interrupciones;
 pthread_create(&hilo_interrupciones, NULL, escuchar_interrupciones, NULL);
