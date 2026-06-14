@@ -2,6 +2,7 @@
 #define KERNEL_SCHEDULER_H
 
 #include <utils/utils.h>
+#include <commons/string.h>
 
 typedef enum {
     NEW,
