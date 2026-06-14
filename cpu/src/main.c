@@ -21,8 +21,10 @@ int main(int argc, char *argv[])
     saludar("cpu");
     ObtenerConfig();
 
-    logger = log_create("cpu.log", "CPU", true, log_level);
-    
+    char* log_filename = string_from_format("cpu_%s.log", argv[2]);
+    logger = log_create(log_filename, "CPU", true, log_level);
+    free(log_filename);
+
     socket_kernel_scheduler = CrearConexion(ip_kernel_scheduler, puerto_kernel_scheduler);
     EnviarOpCode(socket_kernel_scheduler, CPU_A_KERNEL_SCHEDULER);
 
