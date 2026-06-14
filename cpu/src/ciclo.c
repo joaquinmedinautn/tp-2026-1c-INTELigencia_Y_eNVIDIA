@@ -94,8 +94,13 @@ t_instruccion* decode(char* instruccion) {
         token = strtok(NULL, " ");
     }
 
-    log_info(logger, "## PID: %d - Ejecutando: %s", pid_actual, inst->nombre);
-
+// Armamos un string con todos los parámetros
+char params_str[256] = "";
+for (int i = 0; i < inst->cant_params; i++) {
+    strcat(params_str, inst->params[i]);
+    if (i < inst->cant_params - 1) strcat(params_str, " ");
+}
+log_info(logger, "## PID: %d - Ejecutando: %s - %s", pid_actual, inst->nombre, params_str);
     return inst;
 }
 
@@ -278,6 +283,9 @@ int execute(t_instruccion* inst) {
             valor = *(uint32_t*)dato;
         }
         asignar_valor_registro(inst->params[0], valor);
+        // TODO: reemplazar dir_logica por dir_fisica cuando KM la devuelva en la respuesta
+        log_info(logger, "PID: %d - Acción: LEER - Dirección Física: %d - Valor: %d", 
+         pid_actual, dir_logica, valor);
         list_destroy_and_destroy_elements(valores, free);
     }
 
@@ -297,6 +305,9 @@ int execute(t_instruccion* inst) {
     EliminarPaquete(paquete);
 
     int operacion_movout = RecibirOperacion(socket_kernel_memory);
+    // TODO: reemplazar dir_logica por dir_fisica cuando KM la devuelva en la respuesta
+    log_info(logger, "PID: %d - Acción: ESCRIBIR - Dirección Física: %d - Valor: %d",
+         pid_actual, dir_logica, valor);
 
     if (operacion_movout == SEGMENTATION_FAULT) {
         t_paquete* paquete_pid = CrearPaquete(CPU_PID_DEVUELTO);
