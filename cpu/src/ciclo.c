@@ -244,8 +244,8 @@ int execute(t_instruccion* inst) {
     contexto.PC++;
     actualizar_contexto();
     return 2;
-    }  
-
+    } 
+    
     else if (strcmp(inst->nombre, "MOV_IN") == 0) {
     uint32_t dir_logica = obtener_valor_registro("SI");
     int tamanio = tamanio_registro(inst->params[0]);
@@ -257,9 +257,9 @@ int execute(t_instruccion* inst) {
     EnviarPaquete(paquete, socket_kernel_memory);
     EliminarPaquete(paquete);
 
-    int operacion = RecibirOperacion(socket_kernel_memory);
+    int operacion_movin = RecibirOperacion(socket_kernel_memory);
 
-    if (operacion == SEGMENTATION_FAULT) {
+    if (operacion_movin == SEGMENTATION_FAULT) {
         t_paquete* paquete_pid = CrearPaquete(CPU_PID_DEVUELTO);
         AgregarAPaquete(paquete_pid, &pid_actual, sizeof(int));
         char* motivo = "SEG_FAULT";
@@ -267,22 +267,49 @@ int execute(t_instruccion* inst) {
         EnviarPaquete(paquete_pid, socket_kernel_scheduler);
         EliminarPaquete(paquete_pid);
         return 2;
-    } else {
+    } 
+    else {
         t_list* valores = RecibirPaquete(socket_kernel_memory);
         void* dato = list_get(valores, 0);
-
         uint32_t valor;
         if (tamanio == 1) {
             valor = *(uint8_t*)dato;
         } else {
             valor = *(uint32_t*)dato;
         }
-
         asignar_valor_registro(inst->params[0], valor);
-
         list_destroy_and_destroy_elements(valores, free);
     }
+
+} 
+    else if (strcmp(inst->nombre, "MOV_OUT") == 0) {
+    uint32_t dir_logica = obtener_valor_registro("DI");
+    uint32_t valor = obtener_valor_registro(inst->params[0]);
+    int tamanio = tamanio_registro(inst->params[0]);
+    uint8_t val8 = (uint8_t)valor;
+    void* dato = (tamanio == 1) ? (void*)&val8 : (void*)&valor;
+    
+    t_paquete* paquete = CrearPaquete(ESCRIBIR);
+    AgregarAPaquete(paquete, &pid_actual, sizeof(uint32_t));
+    AgregarAPaquete(paquete, &dir_logica, sizeof(uint32_t));
+    AgregarAPaquete(paquete, &tamanio, sizeof(uint32_t));
+    AgregarAPaquete(paquete, dato, tamanio);
+    EnviarPaquete(paquete, socket_kernel_memory);
+    EliminarPaquete(paquete);
+
+    int operacion_movout = RecibirOperacion(socket_kernel_memory);
+
+    if (operacion_movout == SEGMENTATION_FAULT) {
+        t_paquete* paquete_pid = CrearPaquete(CPU_PID_DEVUELTO);
+        AgregarAPaquete(paquete_pid, &pid_actual, sizeof(int));
+        char* motivo = "SEG_FAULT";
+        AgregarAPaquete(paquete_pid, motivo, strlen(motivo) + 1);
+        EnviarPaquete(paquete_pid, socket_kernel_scheduler);
+        EliminarPaquete(paquete_pid);
+        return 2;
     }
+    return 0;
+}
 
 return 0;  // PC no fue modificado
 }
