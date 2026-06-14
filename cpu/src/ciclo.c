@@ -36,6 +36,22 @@ void asignar_valor_registro(char* nombre, uint32_t valor) {
     if (strcmp(nombre, "DI") == 0)  { contexto.DI  = valor; return; }
 }
 
+int tamanio_registro(char* nombre) {
+    if (strcmp(nombre, "AX") == 0) return 1;
+    if (strcmp(nombre, "BX") == 0) return 1;
+    if (strcmp(nombre, "CX") == 0) return 1;
+    if (strcmp(nombre, "DX") == 0) return 1;
+    if (strcmp(nombre, "EAX") == 0) return 4;
+    if (strcmp(nombre, "EBX") == 0) return 4;
+    if (strcmp(nombre, "ECX") == 0) return 4;
+    if (strcmp(nombre, "EDX") == 0) return 4;
+    if (strcmp(nombre, "SI") == 0) return 4;
+    if (strcmp(nombre, "DI") == 0) return 4;
+    if (strcmp(nombre, "PC") == 0) return 4;
+
+return 0;
+}
+
 void actualizar_contexto() {
     t_paquete* paquete = CrearPaquete(CPU_A_KERNEL_MEMORY);
     AgregarAPaquete(paquete, &pid_actual, sizeof(int));
@@ -140,7 +156,7 @@ int execute(t_instruccion* inst) {
     contexto.PC++;
     actualizar_contexto();
     return 2;
-}
+    }
 
     else if (strcmp(inst->nombre, "MEM_ALLOC") == 0) {
     int id_segmento = atoi(inst->params[0]);
@@ -228,7 +244,45 @@ int execute(t_instruccion* inst) {
     contexto.PC++;
     actualizar_contexto();
     return 2;
-}
+    }  
+
+    else if (strcmp(inst->nombre, "MOV_IN") == 0) {
+    uint32_t dir_logica = obtener_valor_registro("SI");
+    int tamanio = tamanio_registro(inst->params[0]);
+
+    t_paquete* paquete = CrearPaquete(LEER);
+    AgregarAPaquete(paquete, &pid_actual, sizeof(uint32_t));
+    AgregarAPaquete(paquete, &dir_logica, sizeof(uint32_t));
+    AgregarAPaquete(paquete, &tamanio, sizeof(uint32_t));
+    EnviarPaquete(paquete, socket_kernel_memory);
+    EliminarPaquete(paquete);
+
+    int operacion = RecibirOperacion(socket_kernel_memory);
+
+    if (operacion == SEGMENTATION_FAULT) {
+        t_paquete* paquete_pid = CrearPaquete(CPU_PID_DEVUELTO);
+        AgregarAPaquete(paquete_pid, &pid_actual, sizeof(int));
+        char* motivo = "SEG_FAULT";
+        AgregarAPaquete(paquete_pid, motivo, strlen(motivo) + 1);
+        EnviarPaquete(paquete_pid, socket_kernel_scheduler);
+        EliminarPaquete(paquete_pid);
+        return 2;
+    } else {
+        t_list* valores = RecibirPaquete(socket_kernel_memory);
+        void* dato = list_get(valores, 0);
+
+        uint32_t valor;
+        if (tamanio == 1) {
+            valor = *(uint8_t*)dato;
+        } else {
+            valor = *(uint32_t*)dato;
+        }
+
+        asignar_valor_registro(inst->params[0], valor);
+
+        list_destroy_and_destroy_elements(valores, free);
+    }
+    }
 
 return 0;  // PC no fue modificado
 }
@@ -261,8 +315,22 @@ void* escuchar_interrupciones(void* arg) {
 void iniciar_ciclo(int pid) {
     pid_actual = pid;
 
- // Inicializamos el contexto en 0 (proceso nuevo)
-memset(&contexto, 0, sizeof(t_contexto));
+// Pedimos el contexto al Kernel Memory
+t_paquete* paquete_ctx = CrearPaquete(SOLICITUD_CONTEXTO);
+AgregarAPaquete(paquete_ctx, &pid_actual, sizeof(uint32_t));
+EnviarPaquete(paquete_ctx, socket_kernel_memory);
+EliminarPaquete(paquete_ctx);
+
+// Recibimos el contexto
+t_list* valores_ctx = RecibirPaquete(socket_kernel_memory);
+t_contexto* ctx_recibido = (t_contexto*)list_get(valores_ctx, 0);
+contexto.PC  = ctx_recibido->PC;
+contexto.AX  = ctx_recibido->AX;  contexto.BX  = ctx_recibido->BX;
+contexto.CX  = ctx_recibido->CX;  contexto.DX  = ctx_recibido->DX;
+contexto.EAX = ctx_recibido->EAX; contexto.EBX = ctx_recibido->EBX;
+contexto.ECX = ctx_recibido->ECX; contexto.EDX = ctx_recibido->EDX;
+contexto.SI  = ctx_recibido->SI;  contexto.DI  = ctx_recibido->DI;
+list_destroy_and_destroy_elements(valores_ctx, free);
 
     pthread_t hilo_interrupciones;
 pthread_create(&hilo_interrupciones, NULL, escuchar_interrupciones, NULL);
