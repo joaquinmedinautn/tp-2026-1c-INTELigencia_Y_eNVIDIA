@@ -281,14 +281,13 @@ int execute(t_instruccion* inst) {
         list_destroy_and_destroy_elements(valores, free);
     }
 
-} 
-    else if (strcmp(inst->nombre, "MOV_OUT") == 0) {
+    } else if (strcmp(inst->nombre, "MOV_OUT") == 0) {
     uint32_t dir_logica = obtener_valor_registro("DI");
     uint32_t valor = obtener_valor_registro(inst->params[0]);
     int tamanio = tamanio_registro(inst->params[0]);
     uint8_t val8 = (uint8_t)valor;
     void* dato = (tamanio == 1) ? (void*)&val8 : (void*)&valor;
-    
+
     t_paquete* paquete = CrearPaquete(ESCRIBIR);
     AgregarAPaquete(paquete, &pid_actual, sizeof(uint32_t));
     AgregarAPaquete(paquete, &dir_logica, sizeof(uint32_t));
@@ -309,6 +308,58 @@ int execute(t_instruccion* inst) {
         return 2;
     }
     return 0;
+
+    } else if (strcmp(inst->nombre, "COPY_MEM") == 0) {
+    uint32_t tamanio = obtener_valor_registro(inst->params[0]);
+    uint32_t dir_origen = obtener_valor_registro("SI");
+    uint32_t dir_destino = obtener_valor_registro("DI");
+
+    // 1. LEER desde SI
+    t_paquete* paq_leer = CrearPaquete(LEER);
+    AgregarAPaquete(paq_leer, &pid_actual, sizeof(uint32_t));
+    AgregarAPaquete(paq_leer, &dir_origen, sizeof(uint32_t));
+    AgregarAPaquete(paq_leer, &tamanio, sizeof(uint32_t));
+    EnviarPaquete(paq_leer, socket_kernel_memory);
+    EliminarPaquete(paq_leer);
+
+    int op_leer = RecibirOperacion(socket_kernel_memory);
+    if (op_leer == SEGMENTATION_FAULT) {
+        t_paquete* paq_pid = CrearPaquete(CPU_PID_DEVUELTO);
+        AgregarAPaquete(paq_pid, &pid_actual, sizeof(int));
+        char* motivo = "SEG_FAULT";
+        AgregarAPaquete(paq_pid, motivo, strlen(motivo) + 1);
+        EnviarPaquete(paq_pid, socket_kernel_scheduler);
+        EliminarPaquete(paq_pid);
+        return 2;
+    }
+
+    // 2. Recibimos el buffer
+    t_list* valores = RecibirPaquete(socket_kernel_memory);
+    void* buffer = list_get(valores, 0);
+
+    // 3. ESCRIBIR en DI con el mismo buffer
+    t_paquete* paq_escribir = CrearPaquete(ESCRIBIR);
+    AgregarAPaquete(paq_escribir, &pid_actual, sizeof(uint32_t));
+    AgregarAPaquete(paq_escribir, &dir_destino, sizeof(uint32_t));
+    AgregarAPaquete(paq_escribir, &tamanio, sizeof(uint32_t));
+    AgregarAPaquete(paq_escribir, buffer, tamanio);
+    EnviarPaquete(paq_escribir, socket_kernel_memory);
+    EliminarPaquete(paq_escribir);
+
+    list_destroy_and_destroy_elements(valores, free);
+
+    int op_escribir = RecibirOperacion(socket_kernel_memory);
+    if (op_escribir == SEGMENTATION_FAULT) {
+        t_paquete* paq_pid = CrearPaquete(CPU_PID_DEVUELTO);
+        AgregarAPaquete(paq_pid, &pid_actual, sizeof(int));
+        char* motivo = "SEG_FAULT";
+        AgregarAPaquete(paq_pid, motivo, strlen(motivo) + 1);
+        EnviarPaquete(paq_pid, socket_kernel_scheduler);
+        EliminarPaquete(paq_pid);
+        return 2;
+    }
+    return 0;
+
 }
 
 return 0;  // PC no fue modificado
