@@ -81,7 +81,7 @@ void atender_peticiones(void* arg){
 
 int main(int argc, char* argv[]) {
     
-    if(argv < 2){
+    if(argc < 2){
         printf("Error: Faltan Argumentos");
         return EXIT_FAILURE;
     }
@@ -101,6 +101,13 @@ int main(int argc, char* argv[]) {
     if(socket_cliente == -1){
         t_paquete* paq_registro = CrearPaquete(NUEVO_MEMORY_STICK);
         AgregarAPaquete(paq_registro, &tam_memoria, sizeof(int));
+
+        //mando el puerto de escucha de este stick
+        AgregarAPaquete(paq_registro, %puerto_escucha, sizeof(int));
+        char* mi_ip = "127.0.0.1"
+        AgregarAPaquete(paq_registro,  mi_ip, strlen(mi_ip) + 1);
+        //mando el ip de este stick
+
         EnviarPaquete(paq_registro, socket_kernel_memory);
         EliminarPaquete(paq_registro);
 

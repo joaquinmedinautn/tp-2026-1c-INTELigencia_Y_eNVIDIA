@@ -48,6 +48,8 @@ typedef struct{
     uint32_t limite;
     uint32_t tamanio; 
     uint32_t base_global;
+    int puerto;
+    char* ip;
 } t_memory_stick;
 
 
@@ -80,6 +82,8 @@ typedef enum {
     COMPACTAR_MEMORIA,
     MEMORIA_INSUFICIENTE,
     SOLICITUD_CONTEXTO,
+    LECTURA_DATOS,
+    ESCRITURA_DATOS,
     
 
     // CPU y Planificacion

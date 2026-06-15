@@ -530,6 +530,24 @@ void atender_cliente(void* void_socket) {
         case CPU_A_KERNEL_MEMORY:
             socket_cpu = socket_cliente;
             log_info(logger, "## CPU Conectada");
+
+            pthread_mutex_lock(&mutex_memory_sticks);
+            int cant_sticks  =list_size(lista_memory_sticks);
+
+            t_paquete* paq_lista = CrearPaquete(NUEVO_MEMORY_STICK);
+            AgregarAPaquete(paq_lista,  &cant_sticks,  sizeof(int));
+
+            for(int i = 0; i < cant_sticks; i++ ){
+                t_memory_stick* s = list_get(lista_memory_sticks, i);
+                AgregarAPaquete(paq_lista, &s->tamanio, sizeof(uint32_t));
+                AgregarAPaquete(paq_lista, &s->base_global, sizeof(uint32_t));
+                AgregarAPaquete(paq_lista, &s->puerto, sizeof(int));
+                AgregarAPaquete(paq_lista, &s->ip, strlen(s->ip) + 1);
+            }
+            pthread_mutex_unlock(&mutex_memory_sticks);
+
+            EnviarPaquete(paq_lista, socket_cpu);
+            EliminarPaquete(paq_lista);
             break;
         case SWAP:{
             socket_swap = socket_cliente;
@@ -562,6 +580,8 @@ void atender_cliente(void* void_socket) {
         case NUEVO_MEMORY_STICK:{
             t_list* valores = RecibirPaquete(socket_cliente);
             uint32_t tamanio_stick = *(uint32_t*)list_get(valores, 0);
+            int puerto_stick = *(int*)list_get(valores, 1);
+            char* ip_stick = list_get(valores, 2);
 
             pthread_mutex_lock(&mutex_memory_sticks);
             uint32_t base_nueva = 0;
@@ -575,6 +595,8 @@ void atender_cliente(void* void_socket) {
             nuevo_stick->tamanio = tamanio_stick;
             nuevo_stick->base_global = base_nueva;
             nuevo_stick->limite = base_nueva + tamanio_stick;
+            nuevo_stick->puerto = puerto_stick;
+            nuevo_stick->ip = string_duplicate(ip_stick);
             list_add(lista_memory_sticks, nuevo_stick);
             pthread_mutex_unlock(&mutex_memory_sticks);
 
@@ -586,6 +608,17 @@ void atender_cliente(void* void_socket) {
             pthread_mutex_unlock(&mutex_huecos);
 
             log_info(logger, "## Memory Stick de %d bytes mapeado en base %d", tamanio_stick, base_nueva);
+            if(socket_cpu  != -1){
+                t_paquete* paq_cpu = CrearPaquete(NUEVO_MEMORY_STICK);
+
+                AgregarAPaquete(paq_cpu, &tamanio_stick, sizeof(uint32_t));
+                AgregarAPaquete(paq_cpu, &base_nueva, sizeof(uint32_t));
+                AgregarAPaquete(paq_cpu, &puerto_stick, sizeof(int));
+                AgregarAPaquete(paq_cpu, &ip_stick, strlen(ip_stick) + 1);
+                EnviarPaquete(paq_cpu,socket_cpu);
+                EliminarPaquete(paq_cpu);
+                log_infp(logger,  "## Notificación de nuevo hardware enviada a la CPU");
+            }
             if (socket_kernel_scheduler_eventos != -1) {
                 EnviarOpCode(socket_kernel_scheduler_eventos, NUEVO_MEMORY_STICK);
             }
