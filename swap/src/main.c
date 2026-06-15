@@ -34,7 +34,7 @@ void ObtenerConfig(char* path) {
 }
 
 void IniciarArchivoSwap(){
-    fd_swap = open(swap_file_path, O_RDWR | O_CREAT.  S_IRUSR | S_IWUSR);
+    fd_swap = open(swap_file_path, O_RDWR | O_CREAT | S_IRUSR | S_IWUSR);
 
     if (fd_swap == -1){
         log_error(logger, "No se pudo abrir o crear el archivo de SWAP en %s", swap_file_path);
@@ -120,7 +120,7 @@ int main(int argc, char *argv[])
                 int offset = numero_bloque * block_size;
 
                 void* buffer_lectura = malloc(block_size);
-                memcpy(buffer_lectura, espaci_swap + offset, block_size);
+                memcpy(buffer_lectura, espacio_swap + offset, block_size);
 
                 t_paquete* res =  CrearPaquete(LECTURA_BLOQUE);
                 AgregarAPaquete(res, buffer_lectura, block_size);

@@ -25,7 +25,7 @@ void ObtenerConfig()
 }
 
 void atender_peticiones(void* arg){
-    int socket_cliente = *(int)arg;
+    int socket_cliente = *(int*)arg;
     free(arg);
     
     while(1){
@@ -64,7 +64,7 @@ void atender_peticiones(void* arg){
 
                 log_info(logger, "## PID: %d Escritura Dir. Física: %d Tamaño: %d", pid, dir_fisica, tamanio); 
                 
-                memcpy(memoria_principal + dir_fisica, datos, tamanio),
+                memcpy(espacio_almacenamiento + dir_fisica, datos, tamanio),
                 
                 EnviarOpCode(socket_cliente, MENSAJE); 
                 
