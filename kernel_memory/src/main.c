@@ -207,7 +207,7 @@ void ObtenerConfig() {
 
     log_level =  log_level_from_string(config_get_string_value(config, "LOG_LEVEL"));
     logger = log_create("kernel_memory.log", "KERNEL_MEMORY", true, log_level);
-    config_destroy(config);
+    //config_destroy(config);
     
 }
 
@@ -381,7 +381,7 @@ void desuspender_proceso(uint32_t pid, int socket_cliente) {
 
                     if(stick != NULL){
                     uint32_t offset_local = dir_fisica_escribir - stick->base_global;
-                    t_paquete* paq_escribir = CrearPaquete(ESCRITURA_DATOS);
+                    t_paquete* paq_escribir = CrearPaquete(ESCRIBIR);
                     AgregarAPaquete(paq_escribir,  &offset_local, sizeof(uint32_t));
                     AgregarAPaquete(paq_escribir, &bytes_a_copiar, sizeof(uint32_t));
                     AgregarAPaquete(paq_escribir, datos_bloque, bytes_a_copiar);
@@ -450,7 +450,7 @@ void compactar_memoria() {
         t_memory_stick* stick_origen = buscar_stick_por_direccion(seg->base);
         uint32_t offset_origen = seg->base - stick_origen->base_global;
         
-        t_paquete* p_leer = CrearPaquete(LECTURA_DATOS);
+        t_paquete* p_leer = CrearPaquete(LEER);
         AgregarAPaquete(p_leer,  &offset_origen, sizeof(uint32_t));
         AgregarAPaquete(p_leer, &seg->tamanio, sizeof(uint32_t));
         EnviarPaquete(p_leer, stick_origen->socket);
@@ -463,7 +463,7 @@ void compactar_memoria() {
         t_memory_stick*  stick_destino = buscar_stick_por_direccion(desplazamiento_actual);
         uint32_t offset_destino = desplazamiento_actual - stick_destino->base_global;
 
-        t_paquete* p_escribir = CrearPaquete(ESCRITURA_DATOS);
+        t_paquete* p_escribir = CrearPaquete(ESCRIBIR);
         AgregarAPaquete(p_escribir,  &offset_destino, sizeof(uint32_t));
         AgregarAPaquete(p_escribir, &seg->tamanio, sizeof(uint32_t));
         AgregarAPaquete(p_escribir, buffer_temp, seg->tamanio);
@@ -522,6 +522,8 @@ void atender_cliente(void* void_socket) {
 
 
     int cod_op = RecibirOperacion(socket_cliente);
+
+    printf("Codigo de operacion: %d\n",cod_op);
     
     switch (cod_op) {
         case KERNEL_SCHEDULER:
@@ -766,13 +768,13 @@ void atender_cliente(void* void_socket) {
                 t_memory_stick* stick = buscar_stick_por_direccion(dir_fisica);
                     if (stick) {
                         uint32_t offset = dir_fisica - stick->base_global;
-                        t_paquete* p = CrearPaquete(LECTURA_DATOS);
+                        t_paquete* p = CrearPaquete(LEER);
                         AgregarAPaquete(p, &offset, sizeof(uint32_t));
                         AgregarAPaquete(p, &tamanio, sizeof(uint32_t));
                         EnviarPaquete(p, stick->socket);
                         EliminarPaquete(p);
 
-                        if (RecibirOperacion(stick->socket) == LECTURA_DATOS) {
+                        if (RecibirOperacion(stick->socket) == LEER) {
                             t_list* resp = RecibirPaquete(stick->socket);
                             t_paquete* res_final = CrearPaquete(LEER);
                             AgregarAPaquete(res_final, list_get(resp, 0), tamanio);
@@ -801,7 +803,7 @@ void atender_cliente(void* void_socket) {
                 t_memory_stick* stick = buscar_stick_por_direccion(dir_fisica);
                     if (stick) {
                         uint32_t offset = dir_fisica - stick->base_global;
-                        t_paquete* p = CrearPaquete(ESCRITURA_DATOS);
+                        t_paquete* p = CrearPaquete(ESCRIBIR);
                         AgregarAPaquete(p, &offset, sizeof(uint32_t));
                         AgregarAPaquete(p, &tamanio, sizeof(uint32_t));
                         AgregarAPaquete(p, datos, tamanio);
