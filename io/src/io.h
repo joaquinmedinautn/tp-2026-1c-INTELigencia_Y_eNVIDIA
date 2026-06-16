@@ -3,6 +3,6 @@
 
 #include <utils/utils.h>
 
-void ObtenerConfig();
+void ObtenerConfig(char* path);
 
 #endif

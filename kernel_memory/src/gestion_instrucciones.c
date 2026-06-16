@@ -13,6 +13,7 @@ void cargar_instrucciones(uint32_t pid, char* path_relativo) {
     FILE* archivo = fopen(path_full, "r");
     if (archivo == NULL) {
         // Si no existe, manejo el error 
+        log_error(logger, "CRÍTICO: No se encontró el archivo de pseudocódigo en la ruta: %s", path_full);
         free(path_full);
         return;
     }

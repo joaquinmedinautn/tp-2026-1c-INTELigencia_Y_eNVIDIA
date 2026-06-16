@@ -104,8 +104,8 @@ int main(int argc, char* argv[]) {
 
         //mando el puerto de escucha de este stick
         AgregarAPaquete(paq_registro, &puerto_escucha, sizeof(int));
-        char* mi_ip = "127.0.0.1";
-        AgregarAPaquete(paq_registro,  mi_ip, strlen(mi_ip) + 1);
+        ip_propia = strdup(config_get_string_value(config, "IP_PROPIA"));
+        AgregarAPaquete(paq_registro,  ip_propia, strlen(ip_propia) + 1);
         //mando el ip de este stick
 
         EnviarPaquete(paq_registro, socket_kernel_memory);

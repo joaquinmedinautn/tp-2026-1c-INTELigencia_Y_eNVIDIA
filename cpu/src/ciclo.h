@@ -2,6 +2,8 @@
 #define CICLO_H
 
 #include <utils/utils.h>
+#include <commons/string.h>
+
 
 typedef struct {
     char* nombre;

@@ -709,11 +709,20 @@ void atender_cliente(void* void_socket) {
                 if (ctx != NULL) {
                     t_paquete* res = CrearPaquete(SOLICITUD_CONTEXTO);
                     
-                    // mando el struct del contexto (los 11 registros clonados)
-                    // no mando la t_list de instrucciones por red, solo el bloque fijo de registros
-                    AgregarAPaquete(res, ctx, sizeof(t_contexto));
-                    
+                    t_paquete* res = CrearPaquete(SOLICITUD_CONTEXTO);
+                    AgregarAPaquete(res, &ctx->PC,  sizeof(uint32_t));
+                    AgregarAPaquete(res, &ctx->EAX, sizeof(uint32_t));
+                    AgregarAPaquete(res, &ctx->EBX, sizeof(uint32_t));
+                    AgregarAPaquete(res, &ctx->ECX, sizeof(uint32_t));
+                    AgregarAPaquete(res, &ctx->EDX, sizeof(uint32_t));
+                    AgregarAPaquete(res, &ctx->SI,  sizeof(uint32_t));
+                    AgregarAPaquete(res, &ctx->DI,  sizeof(uint32_t));
+                    AgregarAPaquete(res, &ctx->AX,  sizeof(uint8_t));
+                    AgregarAPaquete(res, &ctx->BX,  sizeof(uint8_t));
+                    AgregarAPaquete(res, &ctx->CX,  sizeof(uint8_t));
+                    AgregarAPaquete(res, &ctx->DX,  sizeof(uint8_t));
                     EnviarPaquete(res, socket_cliente);
+                    
                     EliminarPaquete(res);
                     log_info(logger, "## Contexto enviado a CPU para PID: %d (PC: %d)", pid, ctx->PC);
                 } else {
@@ -891,7 +900,7 @@ void atender_cliente(void* void_socket) {
                     }
 
                     if(espacio_libre_total >= tamanio_pedido){
-                        EnviarOpCode(socket_kernel_scheduler_eventos, NECESITA_COMPACTACION);
+                        EnviarOpCode(socket_kernel_scheduler_eventos, SOLICITUD_COMPACTACION);
                         log_info(logger, "## PID: %d - Requiere comparctación para para segmento de %d bytes. Solicitud enviada al Scheduler.", pid, tamanio_pedido);
                     } else{
                         EnviarOpCode(socket_cliente, ESPACIO_INSUFICIENTE);
@@ -980,6 +989,8 @@ int main(int argc, char *argv[])
 
     while (1) {
         int socket_cliente = EsperarConexion(socket_servidor);
+
+        printf("socket_cliente: %d", socket_client)
 
         pthread_t hilo;
         int* p_socket = malloc(sizeof(int));

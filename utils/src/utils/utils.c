@@ -58,7 +58,7 @@ int CrearConexion(char *ip, int puerto)
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_PASSIVE;
+    // hints.ai_flags = AI_PASSIVE;
 
     snprintf(puerto_str, sizeof(puerto_str), "%d", puerto);
 
@@ -68,24 +68,28 @@ int CrearConexion(char *ip, int puerto)
                                 server_info->ai_socktype,
                                 server_info->ai_protocol);
 
-    connect(socket_cliente, server_info->ai_addr, server_info->ai_addrlen);
+    if (connect(socket_cliente, server_info->ai_addr, server_info->ai_addrlen) == -1)
+    {
+        close(socket_cliente);
+        freeaddrinfo(server_info);
+        return -1;
+    }
 
     freeaddrinfo(server_info);
 
     return socket_cliente;
 }
 
-
 int RecibirOperacion(int socket_cliente)
 {
-	int op_code;
-	if(recv(socket_cliente, &op_code, sizeof(int), MSG_WAITALL) > 0)
-    return op_code;
-	else
-	{
-		close(socket_cliente);
-		return -1;
-	}
+    int op_code;
+    if (recv(socket_cliente, &op_code, sizeof(int), MSG_WAITALL) > 0)
+        return op_code;
+    else
+    {
+        close(socket_cliente);
+        return -1;
+    }
 }
 
 void CrearBuffer(t_paquete *paquete)
@@ -105,7 +109,7 @@ t_paquete *CrearPaquete(int OP)
 
 void *SerializarPaquete(t_paquete *paquete, int bytes)
 {
-    void* magic = malloc(bytes);
+    void *magic = malloc(bytes);
     int offset = 0;
 
     // copio el codigo de operacion en memoria principal
@@ -113,7 +117,7 @@ void *SerializarPaquete(t_paquete *paquete, int bytes)
     offset += sizeof(int); // avanza en memoria
     memcpy(magic + offset, &(paquete->buffer->size), sizeof(int));
     offset += sizeof(int);
-    memcpy(magic + offset, paquete->buffer->stream, paquete->buffer->size); //en vez de la direccion del puntero, copio el contenido
+    memcpy(magic + offset, paquete->buffer->stream, paquete->buffer->size); // en vez de la direccion del puntero, copio el contenido
 
     return magic;
 }
@@ -128,42 +132,47 @@ void EnviarPaquete(t_paquete *paquete, int socket_conexion)
     free(a_enviar);
 }
 
-void EnviarOpCode(int socket_conexion, int OP)
+/*void EnviarOpCode(int socket_conexion, int OP)
 {
-    int size = 0;  // Buffer vacío
+    int size = 0; // Buffer vacío
     void *buffer = malloc(2 * sizeof(int));
     int offset = 0;
-    
+
     memcpy(buffer + offset, &OP, sizeof(int));
     offset += sizeof(int);
     memcpy(buffer + offset, &size, sizeof(int));
-    
+
     send(socket_conexion, buffer, 2 * sizeof(int), 0);
-    
+
     free(buffer);
+}*/
 
-}
-
-void EliminarPaquete(t_paquete* paquete)
+void EnviarOpCode(int socket_conexion, int OP)
 {
-	free(paquete->buffer->stream);
-	free(paquete->buffer);
-	free(paquete);
+   // Enviamos estrictamente los 4 bytes que componen el código de operación
+   send(socket_conexion, &OP, sizeof(int), 0);
 }
 
-void AgregarAPaquete(t_paquete* paquete, void* valor, int tamanio)
+void EliminarPaquete(t_paquete *paquete)
 {
-	paquete->buffer->stream = realloc(paquete->buffer->stream, paquete->buffer->size + tamanio + sizeof(int));
-
-	memcpy(paquete->buffer->stream + paquete->buffer->size, &tamanio, sizeof(int));
-	memcpy(paquete->buffer->stream + paquete->buffer->size + sizeof(int), valor, tamanio);
-
-	paquete->buffer->size += tamanio + sizeof(int);
+    free(paquete->buffer->stream);
+    free(paquete->buffer);
+    free(paquete);
 }
 
+void AgregarAPaquete(t_paquete *paquete, void *valor, int tamanio)
+{
+    paquete->buffer->stream = realloc(paquete->buffer->stream, paquete->buffer->size + tamanio + sizeof(int));
 
-void* RecibirBuffer(int* size, int socket_cliente){
-    void* buffer;
+    memcpy(paquete->buffer->stream + paquete->buffer->size, &tamanio, sizeof(int));
+    memcpy(paquete->buffer->stream + paquete->buffer->size + sizeof(int), valor, tamanio);
+
+    paquete->buffer->size += tamanio + sizeof(int);
+}
+
+void *RecibirBuffer(int *size, int socket_cliente)
+{
+    void *buffer;
     recv(socket_cliente, size, sizeof(int), MSG_WAITALL);
     buffer = malloc(*size);
     recv(socket_cliente, buffer, *size, MSG_WAITALL);
@@ -171,17 +180,19 @@ void* RecibirBuffer(int* size, int socket_cliente){
 }
 
 // obtengo lista de stings, datos del paquete
-t_list* RecibirPaquete(int socket_cliente){
+t_list *RecibirPaquete(int socket_cliente)
+{
     int size;
     int desplazamiento = 0;
-    void* buffer = RecibirBuffer(&size, socket_cliente);
-    t_list* valores = list_create();
+    void *buffer = RecibirBuffer(&size, socket_cliente);
+    t_list *valores = list_create();
 
-    while(desplazamiento < size){
+    while (desplazamiento < size)
+    {
         int tamanio;
         memcpy(&tamanio, buffer + desplazamiento, sizeof(int));
         desplazamiento += sizeof(int);
-        void* valor = malloc(tamanio);
+        void *valor = malloc(tamanio);
         memcpy(valor, buffer + desplazamiento, tamanio);
         desplazamiento += tamanio;
         list_add(valores, valor);

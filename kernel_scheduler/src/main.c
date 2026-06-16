@@ -222,9 +222,11 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
             pthread_mutex_unlock(&mutex_lista_mutex);
         }
 
-        CambiarEstado(p, EXEC);
-        cpu->ocupado = true;
-        cpu->pid_actual = p->pid;
+        EncolarReady(p);
+
+        cpu->ocupado = false;
+        cpu->pid_actual = -1;
+        sem_post(&sem_cpu_disponible);
     }
     else if (strcmp(syscall_nombre, "MUTEX_LOCK") == 0)
     {
@@ -248,9 +250,11 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
 
             log_info(logger, "## (%d) Toma el Mutex %s", pid, nombre_mutex);
 
-            CambiarEstado(p, EXEC);
-            cpu->ocupado = true;
-            cpu->pid_actual = p->pid;
+            EncolarReady(p);
+
+            cpu->ocupado = false;
+            cpu->pid_actual = -1;
+            sem_post(&sem_cpu_disponible);
         }
         else
         {
@@ -320,10 +324,11 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
             pthread_mutex_unlock(&m->mutex_syscall);
         }
 
-        // el proceso que hizo unlock sigue ejecutando
-        CambiarEstado(p, EXEC);
-        cpu->ocupado = true;
-        cpu->pid_actual = p->pid;
+        EncolarReady(p);
+
+        cpu->ocupado = false;
+        cpu->pid_actual = -1;
+        sem_post(&sem_cpu_disponible);
     }
     else if (strcmp(syscall_nombre, "MEM_ALLOC") == 0)
     {
@@ -362,10 +367,11 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
         }
 
         // en todos los casos reenviar el proceso a la MISMA CPU
-        CambiarEstado(p, EXEC);
-        cpu->ocupado = true;
-        cpu->pid_actual = p->pid;
-        // no liberar la CPU, el proceso vuelve a ella
+        EncolarReady(p);
+
+        cpu->ocupado = false;
+        cpu->pid_actual = -1;
+        sem_post(&sem_cpu_disponible);
     }
     else if (strcmp(syscall_nombre, "MEM_FREE") == 0)
     {
@@ -382,13 +388,14 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
         RecibirOperacion(socket_kernel_memory); // confirmación
         pthread_mutex_unlock(&mutex_kernel_memory);
 
-        // reenviar a la MISMA CPU
-        CambiarEstado(p, EXEC);
-        cpu->ocupado = true;
-        cpu->pid_actual = p->pid;
-
         // MEM_FREE libera memoria, avisar al mediano plazo
         sem_post(&sem_memoria_disponible);
+
+        EncolarReady(p);
+
+        cpu->ocupado = false;
+        cpu->pid_actual = -1;
+        sem_post(&sem_cpu_disponible);
     }
     else if (strcmp(syscall_nombre, "EXIT") == 0)
     {
@@ -456,10 +463,11 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
 
         sem_post(&sem_new); // despertar al planificador de largo plazo
 
-        // el proceso que hizo INIT_PROC vuelve a la MISMA CPU
-        CambiarEstado(p, EXEC);
-        cpu->ocupado = true;
-        cpu->pid_actual = p->pid;
+        EncolarReady(p);
+
+        cpu->ocupado = false;
+        cpu->pid_actual = -1;
+        sem_post(&sem_cpu_disponible);
     }
 }
 
@@ -1254,12 +1262,22 @@ t_mutex_proceso *BuscarMutex(char *nombre)
 
 void EncolarReady(proceso *p)
 {
-    int prio = p->prioridad;
+    int prio;
 
-    if (prio < 0 || prio >= cantidad_colas)
+    if (strcmp(planification_algorithm, "CMN") == 0)
     {
-        log_error(logger, "## (%d) prioridad %d fuera de rango, no planificado", p->pid, prio);
-        return;
+        // en CMN sí importa la prioridad y se valida el rango
+        prio = p->prioridad;
+        if (prio < 0 || prio >= cantidad_colas)
+        {
+            log_error(logger, "## (%d) prioridad %d fuera de rango, no planificado", p->pid, prio);
+            return;
+        }
+    }
+    else
+    {
+        // en FIFO/RR la prioridad se ignora: todos a la cola 0
+        prio = 0;
     }
 
     CambiarEstado(p, READY);
@@ -1356,12 +1374,22 @@ void IniciarCompactacion()
 
 void EncolarReadyAlPrincipio(proceso *p)
 {
-    int prio = p->prioridad;
+    int prio;
 
-    if (prio < 0 || prio >= cantidad_colas)
+    if (strcmp(planification_algorithm, "CMN") == 0)
     {
-        log_error(logger, "## (%d) prioridad %d fuera de rango, no planificado", p->pid, prio);
-        return;
+        // en CMN sí importa la prioridad y se valida el rango
+        prio = p->prioridad;
+        if (prio < 0 || prio >= cantidad_colas)
+        {
+            log_error(logger, "## (%d) prioridad %d fuera de rango, no planificado", p->pid, prio);
+            return;
+        }
+    }
+    else
+    {
+        // en FIFO/RR la prioridad se ignora: todos a la cola 0
+        prio = 0;
     }
 
     CambiarEstado(p, READY);
@@ -1522,12 +1550,20 @@ int main(int argc, char *argv[])
 
     // Conectar a Kernel Memory
     socket_kernel_memory = CrearConexion(ip_kernel_memory, puerto_kernel_memory);
+
+    if (socket_kernel_memory == -1)
+    {
+        log_error(logger, "FALLÓ la conexión principal a Kernel Memory");
+    }
+    log_info(logger, "## socket_kernel_memory = %d", socket_kernel_memory);
+
     EnviarOpCode(socket_kernel_memory, KERNEL_SCHEDULER);
     log_info(logger, "## Conectado a Kernel Memory");
 
     // conexión secundaria para notificaciones espontáneas
     socket_km_eventos = CrearConexion(ip_kernel_memory, puerto_kernel_memory);
     EnviarOpCode(socket_km_eventos, KERNEL_SCHEDULER_EVENTOS); // op code nuevo para identificarse
+    log_info(logger, "## Ambas conexiones a KM abiertas. cantidad_colas = %d", cantidad_colas);
 
     // Inicializar colas
     cola_new = queue_create();

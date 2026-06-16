@@ -34,7 +34,7 @@ void ObtenerConfig(char* path) {
 }
 
 void IniciarArchivoSwap(){
-    fd_swap = open(swap_file_path, O_RDWR | O_CREAT | S_IRUSR | S_IWUSR);
+    fd_swap = open(swap_file_path, O_RDWR | O_CREAT |  O_TRUNC, S_IRUSR | S_IWUSR);
 
     if (fd_swap == -1){
         log_error(logger, "No se pudo abrir o crear el archivo de SWAP en %s", swap_file_path);

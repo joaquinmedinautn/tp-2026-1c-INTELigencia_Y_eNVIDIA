@@ -133,6 +133,7 @@ typedef struct {
     uint8_t CX;
     uint8_t DX;
     t_list* instrucciones;
+    t_list* tabla_segmentos;
 } t_contexto;
 
 
