@@ -617,7 +617,7 @@ void atender_cliente(void* void_socket) {
                 AgregarAPaquete(paq_cpu, &ip_stick, strlen(ip_stick) + 1);
                 EnviarPaquete(paq_cpu,socket_cpu);
                 EliminarPaquete(paq_cpu);
-                log_infp(logger,  "## Notificación de nuevo hardware enviada a la CPU");
+                log_info(logger,  "## Notificación de nuevo hardware enviada a la CPU");
             }
             if (socket_kernel_scheduler_eventos != -1) {
                 EnviarOpCode(socket_kernel_scheduler_eventos, NUEVO_MEMORY_STICK);

@@ -34,14 +34,13 @@ void atender_peticiones(void* arg){
             log_error(logger, "Cliente Desconectado del Memory Stick");
             break;
         }
-    }
     switch(cod_op){
         case LEER:{
                 t_list* valores = RecibirPaquete(socket_cliente);
                 uint32_t dir_fisica = *(uint32_t*)list_get(valores, 0);
                 uint32_t tamanio = *(uint32_t*)list_get(valores, 1);
 
-                log_info(logger, "## PID: %d registro Dir. Física: %d Tamaño: %d", pid, dir_fisica, tamanio);
+                log_info(logger, "## Lectura de %d bytes", tamanio);
                 
                 void* buffer_leido =  malloc(tamanio);
                 memcpy(buffer_leido, espacio_almacenamiento + dir_fisica, tamanio);
@@ -62,7 +61,7 @@ void atender_peticiones(void* arg){
                 uint32_t tamanio = *(uint32_t*)list_get(valores, 1);
                 void* datos = list_get(valores, 2);
 
-                log_info(logger, "## PID: %d Escritura Dir. Física: %d Tamaño: %d", pid, dir_fisica, tamanio); 
+                log_info(logger, "## Escritura de %d bytes", tamanio); 
                 
                 memcpy(espacio_almacenamiento + dir_fisica, datos, tamanio),
                 
@@ -74,6 +73,7 @@ void atender_peticiones(void* arg){
         default:
             log_warning(logger, "Operacion desconocida en Memory Stick: %d", cod_op);
             break;
+        }
     }
     close(socket_cliente);
 }
@@ -98,13 +98,13 @@ int main(int argc, char* argv[]) {
     logger = log_create("memory_stick.log", "MEMORY_STICK", true, log_level);
 
     socket_kernel_memory = CrearConexion(ip_kernel_memory, puerto_kernel_memory);
-    if(socket_cliente == -1){
+    if(socket_kernel_memory > 0){
         t_paquete* paq_registro = CrearPaquete(NUEVO_MEMORY_STICK);
         AgregarAPaquete(paq_registro, &tam_memoria, sizeof(int));
 
         //mando el puerto de escucha de este stick
-        AgregarAPaquete(paq_registro, %puerto_escucha, sizeof(int));
-        char* mi_ip = "127.0.0.1"
+        AgregarAPaquete(paq_registro, &puerto_escucha, sizeof(int));
+        char* mi_ip = "127.0.0.1";
         AgregarAPaquete(paq_registro,  mi_ip, strlen(mi_ip) + 1);
         //mando el ip de este stick
 
@@ -121,6 +121,7 @@ int main(int argc, char* argv[]) {
     socket_servidor = IniciarServidor(puerto_escucha);
     log_info(logger, "## Memory Stick escuchando peticiones en el puerto %d", puerto_escucha);
 
+    int socket_cliente;
     while(1){
         socket_cliente = EsperarConexion(socket_servidor);
         log_info(logger, "Se conecto el modulo de cpu");
