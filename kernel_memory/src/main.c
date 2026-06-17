@@ -348,6 +348,9 @@ void desuspender_proceso(uint32_t pid, int socket_cliente) {
                      manejo_de_memoria_corrupta();
                     }
                     } else {
+                            log_info(logger, "## Segmento %d (offset %d): Copiados %d bytes del Swap al Stick", 
+                                     seg->id_segmento, offset_segmento, bytes_a_copiar);
+                    }else {
                     manejo_de_memoria_corrupta();
                     }
 
@@ -902,6 +905,7 @@ void atender_cliente(void* void_socket) {
                     liberar_memoria_proceso(pid);
 
                     log_info(logger, "## PID: %d - Proceso Finalizado (Memoria liberada)", pid);
+                    EnviarOpCode(socket_cliente, MENSAJE);
 
                     free(key);
                     list_destroy_and_destroy_elements(valores,free);

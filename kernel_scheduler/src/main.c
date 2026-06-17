@@ -404,6 +404,7 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
         AgregarAPaquete(paquete, &pid, sizeof(int));
         EnviarPaquete(paquete, socket_kernel_memory);
         EliminarPaquete(paquete);
+
         RecibirOperacion(socket_kernel_memory);
         pthread_mutex_unlock(&mutex_kernel_memory);
 
@@ -766,13 +767,13 @@ void *AtenderIO(void *args)
 
         case IO_FINALIZADO:
         {
-            //int pid;
-            //recv(io->socket, &pid, sizeof(int), MSG_WAITALL);
-            //proceso *p = BuscarProceso(pid);
+            // int pid;
+            // recv(io->socket, &pid, sizeof(int), MSG_WAITALL);
+            // proceso *p = BuscarProceso(pid);
 
             // 1. Recibimos el paquete completo (esto consume correctamente los metadatos)
             t_list *valores = RecibirPaquete(io->socket);
-            
+
             // 2. El primer elemento siempre es el PID
             int pid = *(int *)list_get(valores, 0);
 
@@ -788,10 +789,10 @@ void *AtenderIO(void *args)
             if (strcmp(io->tipo_io, "STDIN") == 0)
             {
                 // el IO manda los bytes que leyó del teclado
-                //int size;
+                // int size;
                 void *bytes = list_get(valores, 1);
                 int size = p->tamanio_io;
-                //void *bytes = RecibirBuffer(&size, io->socket);
+                // void *bytes = RecibirBuffer(&size, io->socket);
 
                 pthread_mutex_lock(&mutex_kernel_memory);
                 t_paquete *paquete = CrearPaquete(ESCRIBIR);
@@ -805,7 +806,7 @@ void *AtenderIO(void *args)
                 RecibirOperacion(socket_kernel_memory); // confirmación
                 pthread_mutex_unlock(&mutex_kernel_memory);
 
-                //free(bytes);
+                // free(bytes);
             }
 
             if (p->estado == SUSP_BLOCK)

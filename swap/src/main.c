@@ -101,7 +101,7 @@ int main(int argc, char *argv[])
 
                 int  offset =  numero_bloque * block_size;
 
-                memcpy(espacio_swap + offset, contenido, block_size);
+                memcpy((char*)espacio_swap + offset, contenido, block_size);
 
                 msync(espacio_swap, swap_file_size,  MS_SYNC);
 
@@ -120,7 +120,7 @@ int main(int argc, char *argv[])
                 int offset = numero_bloque * block_size;
 
                 void* buffer_lectura = malloc(block_size);
-                memcpy(buffer_lectura, espacio_swap + offset, block_size);
+                memcpy(buffer_lectura, (char*)espacio_swap + offset, block_size);
 
                 t_paquete* res =  CrearPaquete(LECTURA_BLOQUE);
                 AgregarAPaquete(res, buffer_lectura, block_size);

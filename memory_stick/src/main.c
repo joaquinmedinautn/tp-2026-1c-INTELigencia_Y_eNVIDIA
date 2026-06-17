@@ -13,12 +13,14 @@ int socket_kernel_memory;
 void* espacio_almacenamiento;
 int tam_memoria;
 
+char* ip_propia;
+
 void ObtenerConfig()
 {
     config = config_create("memory_stick.config");
     puerto_escucha = config_get_int_value(config, "PUERTO_ESCUCHA");
     log_level = log_level_from_string(config_get_string_value(config, "LOG_LEVEL"));
-    ip_kernel_memory = config_get_string_value(config, "IP_KERNEL_MEMORY");
+    ip_kernel_memory = strdup(config_get_string_value(config, "IP_KERNEL_MEMORY"));
     puerto_kernel_memory = config_get_int_value(config, "PUERTO_KERNEL_MEMORY");
 
     config_destroy(config);
@@ -43,7 +45,7 @@ void atender_peticiones(void* arg){
                 log_info(logger, "## Lectura de %d bytes", tamanio);
                 
                 void* buffer_leido =  malloc(tamanio);
-                memcpy(buffer_leido, espacio_almacenamiento + dir_fisica, tamanio);
+                memcpy(buffer_leido, (char*)espacio_almacenamiento + dir_fisica, tamanio);
 
                 t_paquete* res = CrearPaquete(LEER);
                 AgregarAPaquete(res, buffer_leido, tamanio);
@@ -63,7 +65,7 @@ void atender_peticiones(void* arg){
 
                 log_info(logger, "## Escritura de %d bytes", tamanio); 
                 
-                memcpy(espacio_almacenamiento + dir_fisica, datos, tamanio),
+                memcpy((char*)espacio_almacenamiento + dir_fisica, datos, tamanio),
                 
                 EnviarOpCode(socket_cliente, MENSAJE); 
                 
