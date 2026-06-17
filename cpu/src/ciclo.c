@@ -9,6 +9,8 @@ extern pthread_mutex_t mutex_interrupcion;
 
 extern int segment_max_size;
 
+pthread_t hilo_interrupciones;
+
 int mmu_traducir(uint32_t dir_logica, uint32_t tamanio, uint32_t *dir_fisica)
 {
     uint32_t num_segmento = dir_logica / segment_max_size;
@@ -255,11 +257,22 @@ int execute(t_instruccion *inst)
     else if (strcmp(inst->nombre, "SLEEP") == 0)
     {
         int tiempo = atoi(inst->params[0]);
-        t_paquete *paquete = CrearPaquete(CPU_SYSCALL);
-        AgregarAPaquete(paquete, &pid_actual, sizeof(int));
-        AgregarAPaquete(paquete, &tiempo, sizeof(int));
-        EnviarPaquete(paquete, socket_kernel_scheduler);
-        EliminarPaquete(paquete);
+
+        // 1. Avisamos que viene una Syscall
+        EnviarOpCode(socket_kernel_scheduler, CPU_SYSCALL);
+        
+        // 2. Enviamos el PID (4 bytes)
+        send(socket_kernel_scheduler, &pid_actual, sizeof(int), 0);
+
+        // 3. Enviamos el nombre de la Syscall (50 bytes exactos)
+        char nombre_syscall[50];
+        memset(nombre_syscall, 0, 50);
+        strcpy(nombre_syscall, "SLEEP");
+        send(socket_kernel_scheduler, nombre_syscall, 50, 0);
+
+        // 4. Enviamos el parámetro tiempo (4 bytes)
+        send(socket_kernel_scheduler, &tiempo, sizeof(int), 0);
+
         contexto.PC++;
         actualizar_contexto();
         return 2;
@@ -503,53 +516,53 @@ int execute(t_instruccion *inst)
     }
     else if (strcmp(inst->nombre, "MOV_OUT") == 0)
     {
-    uint32_t dir_logica = obtener_valor_registro("DI");
-    uint32_t valor = obtener_valor_registro(inst->params[0]);
-    int tamanio = tamanio_registro(inst->params[0]);
-    uint32_t dir_fisica;
+        uint32_t dir_logica = obtener_valor_registro("DI");
+        uint32_t valor = obtener_valor_registro(inst->params[0]);
+        int tamanio = tamanio_registro(inst->params[0]);
+        uint32_t dir_fisica;
 
-    // 1. Traducir la dirección Lógica a Física usando la MMU
-    if (mmu_traducir(dir_logica, tamanio, &dir_fisica) == -1)
-    {
-        log_error(logger, "## PID: %d - Error de MMU: Segmentation Fault", pid_actual);
-        t_paquete *paq_pid = CrearPaquete(CPU_PID_DEVUELTO);
-        AgregarAPaquete(paq_pid, &pid_actual, sizeof(int));
-        char *motivo = "SEG_FAULT";
-        AgregarAPaquete(paq_pid, motivo, strlen(motivo) + 1);
-        EnviarPaquete(paq_pid, socket_kernel_scheduler);
-        EliminarPaquete(paq_pid);
-        return 2;
-    }
+        // 1. Traducir la dirección Lógica a Física usando la MMU
+        if (mmu_traducir(dir_logica, tamanio, &dir_fisica) == -1)
+        {
+            log_error(logger, "## PID: %d - Error de MMU: Segmentation Fault", pid_actual);
+            t_paquete *paq_pid = CrearPaquete(CPU_PID_DEVUELTO);
+            AgregarAPaquete(paq_pid, &pid_actual, sizeof(int));
+            char *motivo = "SEG_FAULT";
+            AgregarAPaquete(paq_pid, motivo, strlen(motivo) + 1);
+            EnviarPaquete(paq_pid, socket_kernel_scheduler);
+            EliminarPaquete(paq_pid);
+            return 2;
+        }
 
-    // 2. Preparar el dato a escribir según el tamaño del registro
-    uint8_t val8 = (uint8_t)valor;
-    void *dato = (tamanio == 1) ? (void *)&val8 : (void *)&valor;
+        // 2. Preparar el dato a escribir según el tamaño del registro
+        uint8_t val8 = (uint8_t)valor;
+        void *dato = (tamanio == 1) ? (void *)&val8 : (void *)&valor;
 
-    // 3. ESCRIBIR en Kernel Memory usando la Dirección Física
-    t_paquete *paquete = CrearPaquete(ESCRIBIR);
-    AgregarAPaquete(paquete, &pid_actual, sizeof(uint32_t));
-    AgregarAPaquete(paquete, &dir_fisica, sizeof(uint32_t));
-    AgregarAPaquete(paquete, &tamanio, sizeof(uint32_t));
-    AgregarAPaquete(paquete, dato, tamanio);
-    EnviarPaquete(paquete, socket_kernel_memory);
-    EliminarPaquete(paquete);
+        // 3. ESCRIBIR en Kernel Memory usando la Dirección Física
+        t_paquete *paquete = CrearPaquete(ESCRIBIR);
+        AgregarAPaquete(paquete, &pid_actual, sizeof(uint32_t));
+        AgregarAPaquete(paquete, &dir_fisica, sizeof(uint32_t));
+        AgregarAPaquete(paquete, &tamanio, sizeof(uint32_t));
+        AgregarAPaquete(paquete, dato, tamanio);
+        EnviarPaquete(paquete, socket_kernel_memory);
+        EliminarPaquete(paquete);
 
-    int operacion = RecibirOperacion(socket_kernel_memory);
-    if (operacion == SEGMENTATION_FAULT)
-    {
-        t_paquete *paq_pid = CrearPaquete(CPU_PID_DEVUELTO);
-        AgregarAPaquete(paq_pid, &pid_actual, sizeof(int));
-        char *motivo = "SEG_FAULT";
-        AgregarAPaquete(paq_pid, motivo, strlen(motivo) + 1);
-        EnviarPaquete(paq_pid, socket_kernel_scheduler);
-        EliminarPaquete(paq_pid);
-        return 2;
-    }
+        int operacion = RecibirOperacion(socket_kernel_memory);
+        if (operacion == SEGMENTATION_FAULT)
+        {
+            t_paquete *paq_pid = CrearPaquete(CPU_PID_DEVUELTO);
+            AgregarAPaquete(paq_pid, &pid_actual, sizeof(int));
+            char *motivo = "SEG_FAULT";
+            AgregarAPaquete(paq_pid, motivo, strlen(motivo) + 1);
+            EnviarPaquete(paq_pid, socket_kernel_scheduler);
+            EliminarPaquete(paq_pid);
+            return 2;
+        }
 
-    log_info(logger, "PID: %d - Acción: ESCRIBIR - Dirección Física: %d - Valor: %d",
-             pid_actual, dir_fisica, valor);
+        log_info(logger, "PID: %d - Acción: ESCRIBIR - Dirección Física: %d - Valor: %d",
+                 pid_actual, dir_fisica, valor);
 
-    return 0;
+        return 0;
     }
     else if (strcmp(inst->nombre, "COPY_MEM") == 0)
     {
@@ -653,22 +666,6 @@ int check_interrupt()
     return resultado;
 }
 
-void *escuchar_interrupciones(void *arg)
-{
-    while (1)
-    {
-        int operacion = RecibirOperacion(socket_kernel_scheduler);
-        if (operacion == DESCONEXION)
-        {
-            break;
-        }
-        // Llegó una interrupción
-        pthread_mutex_lock(&mutex_interrupcion);
-        hay_interrupcion = 1;
-        pthread_mutex_unlock(&mutex_interrupcion);
-    }
-    return NULL;
-}
 
 void iniciar_ciclo(int pid)
 {
@@ -700,26 +697,6 @@ void iniciar_ciclo(int pid)
     contexto.SI = ctx_recibido->SI;
     contexto.DI = ctx_recibido->DI;
 
-    // --- NUEVO: Limpiamos tabla anterior y cargamos la nueva ---
-    if (contexto.tabla_segmentos != NULL)
-    {
-        list_destroy_and_destroy_elements(contexto.tabla_segmentos, free);
-    }
-    contexto.tabla_segmentos = list_create();
-
-    int cant_segmentos = *(int *)list_get(valores_ctx, 1);
-    for (int i = 0; i < cant_segmentos; i++)
-    {
-        t_segmento *seg_recibido = (t_segmento *)list_get(valores_ctx, 2 + i);
-        t_segmento *nuevo_seg = malloc(sizeof(t_segmento));
-        memcpy(nuevo_seg, seg_recibido, sizeof(t_segmento));
-        list_add(contexto.tabla_segmentos, nuevo_seg);
-    }
-    list_destroy_and_destroy_elements(valores_ctx, free);
-
-    pthread_t hilo_interrupciones;
-    pthread_create(&hilo_interrupciones, NULL, escuchar_interrupciones, NULL);
-    pthread_detach(hilo_interrupciones);
 
     // Loop principal
     while (1)
@@ -754,4 +731,5 @@ void iniciar_ciclo(int pid)
             break;
         }
     }
+
 }

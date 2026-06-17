@@ -109,50 +109,6 @@ t_hueco_libre* buscar_hueco_libre(uint32_t tamanio_pedido) {
     return hueco_seleccionado;
 }
 
-int traducir_direccion_logica(uint32_t pid, uint32_t dir_logica, uint32_t tamanio_operacion) {
-    
-    // formulas exactas del enunciado para separar la dirección
-    uint32_t num_segmento = dir_logica / segment_max_size;
-    uint32_t desplazamiento = dir_logica % segment_max_size;
-
-    // busco la tabla de segmentos del PID en el diccionario
-    char* key = string_itoa(pid);
-    pthread_mutex_lock(&mutex_tabla_segmentos);
-    t_list* tabla = dictionary_get(tabla_segmentos, key);
-    pthread_mutex_unlock(&mutex_tabla_segmentos);
-    free(key);
-
-    if (tabla == NULL) {
-        log_error(logger, "PID %d no tiene tabla de segmentos.", pid);
-        return -1;
-    }
-
-    // busco el segmento específico en la lista
-    t_segmento* segmento_buscado = NULL;
-    for (int i = 0; i < list_size(tabla); i++) {
-        t_segmento* seg = list_get(tabla, i);
-        if (seg->id_segmento == num_segmento) {
-            segmento_buscado = seg;
-            break;
-        }
-    }
-
-    if (segmento_buscado == NULL) {
-        log_error(logger, "Error: Segmento %d no encontrado para PID %d", num_segmento, pid);
-        return -1;
-    }
-
-    // verifico  Segmentation Fault 
-    if ((desplazamiento + tamanio_operacion) > segmento_buscado->tamanio) {
-        log_error(logger, "SEG_FAULT: Acceso fuera de límite en segmento %d", num_segmento);
-        return -1; 
-    }
-
-    // calculo final de la dirección física
-    uint32_t dir_fisica = segmento_buscado->base + desplazamiento;
-    return dir_fisica;
-}
-
 void liberar_memoria_proceso(uint32_t pid){
     char*key  = string_itoa(pid);
     pthread_mutex_lock(&mutex_tabla_segmentos);
@@ -709,7 +665,6 @@ void atender_cliente(void* void_socket) {
                 if (ctx != NULL) {
                     t_paquete* res = CrearPaquete(SOLICITUD_CONTEXTO);
                     
-                    t_paquete* res = CrearPaquete(SOLICITUD_CONTEXTO);
                     AgregarAPaquete(res, &ctx->PC,  sizeof(uint32_t));
                     AgregarAPaquete(res, &ctx->EAX, sizeof(uint32_t));
                     AgregarAPaquete(res, &ctx->EBX, sizeof(uint32_t));
@@ -763,36 +718,30 @@ void atender_cliente(void* void_socket) {
             case LEER: { 
                 t_list* valores = RecibirPaquete(socket_cliente);
                 uint32_t pid = *(uint32_t*)list_get(valores, 0);
-                uint32_t dir_logica = *(uint32_t*)list_get(valores, 1);
+                uint32_t dir_fisica = *(uint32_t*)list_get(valores, 1); // ¡Ya viene como física desde la CPU!
                 uint32_t tamanio = *(uint32_t*)list_get(valores, 2);
-
-                int dir_fisica =  traducir_direccion_logica(pid, dir_logica, tamanio);
-                
-                if (dir_fisica == -1 ){
-                    EnviarOpCode(socket_cliente,SEGMENTATION_FAULT);
-                }  else  {
 
                 log_info(logger, "## PID: %d Lectura Dir. Física: %d Tamaño: %d", pid, dir_fisica, tamanio);
                 
                 t_memory_stick* stick = buscar_stick_por_direccion(dir_fisica);
-                    if (stick) {
-                        uint32_t offset = dir_fisica - stick->base_global;
-                        t_paquete* p = CrearPaquete(LEER);
-                        AgregarAPaquete(p, &offset, sizeof(uint32_t));
-                        AgregarAPaquete(p, &tamanio, sizeof(uint32_t));
-                        EnviarPaquete(p, stick->socket);
-                        EliminarPaquete(p);
+                if (stick) {
+                    uint32_t offset = dir_fisica - stick->base_global;
+                    t_paquete* p = CrearPaquete(LEER);
+                    AgregarAPaquete(p, &offset, sizeof(uint32_t));
+                    AgregarAPaquete(p, &tamanio, sizeof(uint32_t));
+                    EnviarPaquete(p, stick->socket);
+                    EliminarPaquete(p);
 
-                        if (RecibirOperacion(stick->socket) == LEER) {
-                            t_list* resp = RecibirPaquete(stick->socket);
-                            t_paquete* res_final = CrearPaquete(LEER);
-                            AgregarAPaquete(res_final, list_get(resp, 0), tamanio);
-                            EnviarPaquete(res_final, socket_cliente);
-                            EliminarPaquete(res_final);
-                            list_destroy_and_destroy_elements(resp, free);
-                        } else manejo_de_memoria_corrupta();
+                    if (RecibirOperacion(stick->socket) == LEER) {
+                        t_list* resp = RecibirPaquete(stick->socket);
+                        t_paquete* res_final = CrearPaquete(LEER);
+                        AgregarAPaquete(res_final, list_get(resp, 0), tamanio);
+                        EnviarPaquete(res_final, socket_cliente);
+                        EliminarPaquete(res_final);
+                        list_destroy_and_destroy_elements(resp, free);
                     } else manejo_de_memoria_corrupta();
-                }
+                } else manejo_de_memoria_corrupta();
+                
                 list_destroy_and_destroy_elements(valores, free);
                 break;
             }
@@ -800,29 +749,26 @@ void atender_cliente(void* void_socket) {
             case ESCRIBIR: { 
                 t_list* valores = RecibirPaquete(socket_cliente);
                 uint32_t pid = *(uint32_t*)list_get(valores, 0);
-                uint32_t dir_logica = *(uint32_t*)list_get(valores, 1);
+                uint32_t dir_fisica = *(uint32_t*)list_get(valores, 1); // ¡Ya viene como física desde la CPU!
                 uint32_t tamanio = *(uint32_t*)list_get(valores, 2);
                 void* datos = list_get(valores, 3);
 
-                uint32_t dir_fisica = traducir_direccion_logica(pid, dir_logica, tamanio);
-                if(dir_fisica == -1){
-                    EnviarOpCode(socket_cliente, SEGMENTATION_FAULT);
-                }else{log_info(logger, "## PID: %d Escritura Dir. Física: %d Tamaño: %d", pid, dir_fisica, tamanio); 
+                log_info(logger, "## PID: %d Escritura Dir. Física: %d Tamaño: %d", pid, dir_fisica, tamanio); 
                 
                 t_memory_stick* stick = buscar_stick_por_direccion(dir_fisica);
-                    if (stick) {
-                        uint32_t offset = dir_fisica - stick->base_global;
-                        t_paquete* p = CrearPaquete(ESCRIBIR);
-                        AgregarAPaquete(p, &offset, sizeof(uint32_t));
-                        AgregarAPaquete(p, &tamanio, sizeof(uint32_t));
-                        AgregarAPaquete(p, datos, tamanio);
-                        EnviarPaquete(p, stick->socket);
-                        EliminarPaquete(p);
+                if (stick) {
+                    uint32_t offset = dir_fisica - stick->base_global;
+                    t_paquete* p = CrearPaquete(ESCRIBIR);
+                    AgregarAPaquete(p, &offset, sizeof(uint32_t));
+                    AgregarAPaquete(p, &tamanio, sizeof(uint32_t));
+                    AgregarAPaquete(p, datos, tamanio);
+                    EnviarPaquete(p, stick->socket);
+                    EliminarPaquete(p);
 
-                        if (RecibirOperacion(stick->socket) == MENSAJE) EnviarOpCode(socket_cliente, MENSAJE);
-                        else manejo_de_memoria_corrupta();
-                    } else manejo_de_memoria_corrupta();
-                }
+                    if (RecibirOperacion(stick->socket) == MENSAJE) EnviarOpCode(socket_cliente, MENSAJE);
+                    else manejo_de_memoria_corrupta();
+                } else manejo_de_memoria_corrupta();
+                
                 list_destroy_and_destroy_elements(valores, free);
                 break;
             }
@@ -955,7 +901,7 @@ void atender_cliente(void* void_socket) {
 
                     liberar_memoria_proceso(pid);
 
-                    log_info(logger, "## PID: %d - Proceso Finalizado (Memodia liberada)", pid);
+                    log_info(logger, "## PID: %d - Proceso Finalizado (Memoria liberada)", pid);
 
                     free(key);
                     list_destroy_and_destroy_elements(valores,free);
@@ -990,7 +936,7 @@ int main(int argc, char *argv[])
     while (1) {
         int socket_cliente = EsperarConexion(socket_servidor);
 
-        printf("socket_cliente: %d", socket_client)
+        printf("socket_cliente: %d\n", socket_cliente);
 
         pthread_t hilo;
         int* p_socket = malloc(sizeof(int));

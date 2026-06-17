@@ -35,6 +35,7 @@ typedef struct
     int id_cpu;
     bool ocupado;  // Si está ejecutando un proceso
     int pid_actual;
+    int socket_interrupt;
 } t_cpu_conectada;
 
 typedef struct

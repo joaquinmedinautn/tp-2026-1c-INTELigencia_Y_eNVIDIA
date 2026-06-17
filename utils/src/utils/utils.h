@@ -61,6 +61,7 @@ typedef enum {
     IO,
     SWAP,
     CPU_A_MEMORY_STICK,
+    CPU_A_KERNEL_SCHEDULER_INTERRUPT,
 
     // Gestión de Procesos
     CREAR_PROCESO,

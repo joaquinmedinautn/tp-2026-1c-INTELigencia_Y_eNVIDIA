@@ -6,7 +6,7 @@
       "type": "cppdbg",
       "request": "launch",
       "program": "${workspaceFolder}/bin/${workspaceFolderBasename}",
-      "args": [],
+      "args": ["./bin/cpu cpu.config 1"],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}",
       "environment": [],

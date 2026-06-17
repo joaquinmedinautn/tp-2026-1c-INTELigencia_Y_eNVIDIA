@@ -15,87 +15,116 @@ int socket_kernel_scheduler;
 int socket_kernel_memory;
 int socket_memory_stick;
 t_list* sockets_memory_sticks;
-
+int socket_kernel_interrupt;
 int segment_max_size;
+
+void* escuchar_interrupciones(void* arg) {
+    while (1) {
+        // Leemos EXCLUSIVAMENTE del socket de interrupciones
+        int operacion = RecibirOperacion(socket_kernel_interrupt);
+        
+        if (operacion == -1 || operacion == DESCONEXION) {
+            log_error(logger, "Se desconectó el canal de interrupciones");
+            break;
+        }
+
+        // Si llega CUALQUIER señal por este socket, es una interrupción
+        pthread_mutex_lock(&mutex_interrupcion);
+        hay_interrupcion = 1;
+        pthread_mutex_unlock(&mutex_interrupcion);
+    }
+    return NULL;
+}
+
 
 int main(int argc, char *argv[])
 {
-
+    // Corrección de los argumentos: El estándar del TP es [Archivo Config] [Identificador]
     if (argc < 3)
     {
-        fprintf(stderr, "Uso: %s [Identificador]\n", argv[0]);
+        fprintf(stderr, "Uso: %s [Archivo Config] [Identificador]\n", argv[0]);
         return 1;
     }
-    int id_cpu = atoi(argv[1]);
+    
+    // Obtenemos el ID de CPU del segundo argumento
+    int id_cpu = atoi(argv[2]);
 
     saludar("cpu");
-    ObtenerConfig();
+    // Obtenemos config pasándole la ruta del primer argumento (como hicimos con IO)
+    ObtenerConfig(argv[1]);
+    printf("Se obtuvo el config\n"); // debug
 
-    char *log_filename = string_from_format("cpu_%s.log", argv[2]);
+    char *log_filename = string_from_format("cpu_%d.log", id_cpu);
     logger = log_create(log_filename, "CPU", true, log_level);
     free(log_filename);
+    
     sockets_memory_sticks = list_create();
+    printf("Se crea la lista de memory sitsck\n"); // debug
 
+    // ==========================================================
+    // 1. CONEXIÓN DISPATCH (Principal para Procesos y Syscalls)
+    // ==========================================================
+    
     socket_kernel_scheduler = CrearConexion(ip_kernel_scheduler, puerto_kernel_scheduler);
     EnviarOpCode(socket_kernel_scheduler, CPU_A_KERNEL_SCHEDULER);
-    send(socket_kernel_scheduler, &id_cpu, sizeof(int), 0); // manda el cpu id
+    send(socket_kernel_scheduler, &id_cpu, sizeof(int), 0);
 
+    // ==========================================================
+    // 2. CONEXIÓN INTERRUPT (Exclusiva para desalojos/quantum)
+    // ==========================================================
+    socket_kernel_interrupt = CrearConexion(ip_kernel_scheduler, puerto_kernel_scheduler);
+    EnviarOpCode(socket_kernel_interrupt, CPU_A_KERNEL_SCHEDULER_INTERRUPT);
+    send(socket_kernel_interrupt, &id_cpu, sizeof(int), 0); 
+
+    // 3. NACIMIENTO DEL HILO DE INTERRUPCIONES (Una sola vez)
+    pthread_t hilo_interrupciones;
+    pthread_create(&hilo_interrupciones, NULL, escuchar_interrupciones, NULL);
+    pthread_detach(hilo_interrupciones);
+
+
+    // ==========================================================
+    // CONEXIÓN KERNEL MEMORY Y MEMORY STICKS (Tu código intacto)
+    // ==========================================================
     socket_kernel_memory = CrearConexion(ip_kernel_memory, puerto_kernel_memory);
     EnviarOpCode(socket_kernel_memory, CPU_A_KERNEL_MEMORY);
 
-    // Recibimos la lista inicial de Memory Sticks del Kernel Memory
     int op_km = RecibirOperacion(socket_kernel_memory);
     if (op_km == NUEVO_MEMORY_STICK)
     {
-    t_list* valores_sticks = RecibirPaquete(socket_kernel_memory);
-    int cant_sticks = *(int*)list_get(valores_sticks, 0);
-    int idx = 1;
-    for (int i = 0; i < cant_sticks; i++) {
-        uint32_t tamanio  = *(uint32_t*)list_get(valores_sticks, idx++);
-        uint32_t base     = *(uint32_t*)list_get(valores_sticks, idx++);
-        int puerto_stick  = *(int*)list_get(valores_sticks, idx++);
-        char* ip_stick    = (char*)list_get(valores_sticks, idx++);
+        t_list* valores_sticks = RecibirPaquete(socket_kernel_memory);
+        int cant_sticks = *(int*)list_get(valores_sticks, 0);
+        int idx = 1;
+        for (int i = 0; i < cant_sticks; i++) {
+            uint32_t tamanio  = *(uint32_t*)list_get(valores_sticks, idx++);
+            uint32_t base     = *(uint32_t*)list_get(valores_sticks, idx++);
+            int puerto_stick  = *(int*)list_get(valores_sticks, idx++);
+            char* ip_stick    = (char*)list_get(valores_sticks, idx++);
 
-        int socket_stick = CrearConexion(ip_stick, puerto_stick);
-        EnviarOpCode(socket_stick, CPU_A_MEMORY_STICK);
-        list_add(sockets_memory_sticks, (void*)(intptr_t)socket_stick);
-        log_info(logger, "## Conectado a Memory Stick en %s:%d", ip_stick, puerto_stick);
+            int socket_stick = CrearConexion(ip_stick, puerto_stick);
+            EnviarOpCode(socket_stick, CPU_A_MEMORY_STICK);
+            list_add(sockets_memory_sticks, (void*)(intptr_t)socket_stick);
+            log_info(logger, "## Conectado a Memory Stick en %s:%d", ip_stick, puerto_stick);
+        }
+        list_destroy_and_destroy_elements(valores_sticks, free);
     }
-    list_destroy_and_destroy_elements(valores_sticks, free);
-    }
-    // socket_memory_stick = CrearConexion(ip_memory_stick, puerto_memory_stick);
-    // EnviarOpCode(socket_memory_stick, CPU_A_MEMORY_STICK);
 
-    /* while (1) {
-      // Esperamos un PID del Scheduler
-      int size;
-      void* buffer = RecibirBuffer(&size, socket_kernel_scheduler);
-      int pid = *(int*)buffer;
-      free(buffer);
-
-      // Arrancamos el ciclo con ese PID
-      iniciar_ciclo(pid);
-  }*/
+    // ==========================================================
+    // BUCLE PRINCIPAL DE DISPATCH
+    // ==========================================================
     while (1)
     {
-        // 1. Primero recibimos el OpCode para saber qué nos mandan
+        // Solo escuchamos OpCodes del socket PRINCIPAL
         int op_code = RecibirOperacion(socket_kernel_scheduler);
 
         if (op_code == PROCESO)
         {
-            // 2. Desempaquetamos la lista de valores
             t_list *valores = RecibirPaquete(socket_kernel_scheduler);
-
-            // 3. Extraemos el PID (el Scheduler manda el PID como primer elemento)
             int pid = *(int *)list_get(valores, 0);
-
-            // 4. Limpiamos memoria para evitar fugas (memory leaks)
             list_destroy_and_destroy_elements(valores, free);
 
-            // Arrancamos el ciclo con ese PID
             iniciar_ciclo(pid);
         }
-        else if (op_code == -1)
+        else if (op_code <= 0)
         {
             log_error(logger, "Scheduler desconectado.");
             break;
@@ -105,9 +134,9 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-void ObtenerConfig()
+void ObtenerConfig(char* path)
 {
-    config = config_create("cpu.config");
+    config = config_create(path);
     if (config == NULL)
     {
         fprintf(stderr, "No se pudo abrir cpu.config desde %s\n", getcwd(NULL, 0));

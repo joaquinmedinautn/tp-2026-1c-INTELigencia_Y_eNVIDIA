@@ -4,6 +4,6 @@
 #include <utils/utils.h>
 #include "ciclo.h"
 
-void ObtenerConfig();
+void ObtenerConfig(char* path);
 
 #endif

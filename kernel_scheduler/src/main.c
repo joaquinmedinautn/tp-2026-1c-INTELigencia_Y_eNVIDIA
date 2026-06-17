@@ -582,6 +582,25 @@ void *ManejarCliente(void *arg)
     case IO:
         RegistrarIO(socket_cliente);
         break;
+    case CPU_A_KERNEL_SCHEDULER_INTERRUPT:
+    {
+        int id_cpu;
+        recv(socket_cliente, &id_cpu, sizeof(int), MSG_WAITALL);
+
+        // Buscamos la CPU que se conectó antes en la lista y le guardamos su socket de interrupción
+        pthread_mutex_lock(&mutex_cpus);
+        for (int i = 0; i < list_size(lista_cpus); i++)
+        {
+            t_cpu_conectada *cpu = list_get(lista_cpus, i);
+            if (cpu->id_cpu == id_cpu)
+            {
+                cpu->socket_interrupt = socket_cliente; // Deberás agregar este int en el struct t_cpu_conectada
+                break;
+            }
+        }
+        pthread_mutex_unlock(&mutex_cpus);
+        break;
+    }
     default:
         log_error(logger, "Operación desconocida: %d", op_code);
         close(socket_cliente);
@@ -657,6 +676,16 @@ void *AtenderCPU(void *args)
     {
         // Esperar a que el scheduler le asigne un proceso o reciba interrupción
         int op_code = RecibirOperacion(cpu->socket);
+
+        if (op_code == -1)
+        {
+            log_info(logger, "## CPU %d desconectada", cpu->id_cpu);
+            pthread_mutex_lock(&mutex_cpus);
+            list_remove_element(lista_cpus, cpu);
+            pthread_mutex_unlock(&mutex_cpus);
+            free(cpu);
+            return NULL; // cierra solo este hilo, no mata el Scheduler
+        }
 
         switch (op_code)
         {
@@ -737,15 +766,32 @@ void *AtenderIO(void *args)
 
         case IO_FINALIZADO:
         {
-            int pid;
-            recv(io->socket, &pid, sizeof(int), MSG_WAITALL);
+            //int pid;
+            //recv(io->socket, &pid, sizeof(int), MSG_WAITALL);
+            //proceso *p = BuscarProceso(pid);
+
+            // 1. Recibimos el paquete completo (esto consume correctamente los metadatos)
+            t_list *valores = RecibirPaquete(io->socket);
+            
+            // 2. El primer elemento siempre es el PID
+            int pid = *(int *)list_get(valores, 0);
+
             proceso *p = BuscarProceso(pid);
+
+            if (p == NULL) // <-- agregar esta protección
+            {
+                log_error(logger, "## IO_FINALIZADO: no se encontró el proceso %d", pid);
+                list_destroy_and_destroy_elements(valores, free);
+                break;
+            }
 
             if (strcmp(io->tipo_io, "STDIN") == 0)
             {
                 // el IO manda los bytes que leyó del teclado
-                int size;
-                void *bytes = RecibirBuffer(&size, io->socket);
+                //int size;
+                void *bytes = list_get(valores, 1);
+                int size = p->tamanio_io;
+                //void *bytes = RecibirBuffer(&size, io->socket);
 
                 pthread_mutex_lock(&mutex_kernel_memory);
                 t_paquete *paquete = CrearPaquete(ESCRIBIR);
@@ -759,7 +805,7 @@ void *AtenderIO(void *args)
                 RecibirOperacion(socket_kernel_memory); // confirmación
                 pthread_mutex_unlock(&mutex_kernel_memory);
 
-                free(bytes);
+                //free(bytes);
             }
 
             if (p->estado == SUSP_BLOCK)
@@ -775,6 +821,8 @@ void *AtenderIO(void *args)
                 EncolarReady(p);
                 log_info(logger, "## (%d) finalizó IO y pasa a READY", p->pid);
             }
+            list_destroy_and_destroy_elements(valores, free);
+            break;
         }
         break;
 
@@ -921,6 +969,11 @@ void *PlanificadorMedianoPlazo(void *args)
         // ordenar suspendidos por prioridad, y por tiempo si igual prioridad
         // trabajar sobre una lista temporal para no modificar la cola mientras iteramos
         t_list *suspendidos = list_create();
+
+        // Copiamos los elementos de las colas sin destruirlas (Copia superficial)
+        // Accedemos a la lista interna de la cola usando ->elements
+        // list_add_all(suspendidos, cola_susp_block->elements);
+        // list_add_all(suspendidos, cola_susp_ready->elements);
 
         // agregar los de SUSP_BLOCK
         t_queue *temp_block = cola_susp_block;

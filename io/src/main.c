@@ -7,7 +7,7 @@ t_log_level log_level;
 t_log *logger;
 int socket_kernel_scheduler;
 
-void ObtenerConfig(char* archivo_config)
+void ObtenerConfig(char *archivo_config)
 {
     config = config_create(archivo_config);
     if (config == NULL)
@@ -29,7 +29,7 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    char* path_config = argv[1];
+    char *path_config = argv[1];
     char *tipo = argv[2]; // recibe el tipo por parámetro
     ObtenerConfig(path_config);
     // logger obligatorio
@@ -54,6 +54,8 @@ int main(int argc, char *argv[])
     {
         // espera el proximo op code
         int cod_op = RecibirOperacion(socket_kernel_scheduler);
+        printf("Codigo de op: %d\n",cod_op); // debug
+        fflush(stdout);
 
         if (cod_op == -1)
         {
@@ -119,8 +121,13 @@ int main(int argc, char *argv[])
 
             // reservo memoria para el ingreso de datos
             char *buffer = calloc(1, tam_a_leer + 1);
-            if (fgets(buffer, tam_a_leer + 1, stdin) != NULL) {
-                    buffer[strcspn(buffer, "\n")] = '\0'; // limpiar el enter 
+            if (fgets(buffer, tam_a_leer + 1, stdin) != NULL)
+            {
+                buffer[strcspn(buffer, "\n")] = '\0'; // limpiar el enter
+            }
+            if (strchr(buffer, '\n') == NULL) {
+                    int c;
+                    while ((c = getchar()) != '\n' && c != EOF);
                 }
 
             log_info(logger, "## PID: %d - Fin de IO", pid);
@@ -132,7 +139,6 @@ int main(int argc, char *argv[])
             AgregarAPaquete(p, buffer, tam_a_leer);
             EnviarPaquete(p, socket_kernel_scheduler);
 
-            
             EliminarPaquete(p);
             free(buffer);
             list_destroy_and_destroy_elements(valores, free);
