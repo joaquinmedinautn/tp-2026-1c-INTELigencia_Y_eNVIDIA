@@ -14,13 +14,14 @@ t_log *logger;
 int socket_kernel_scheduler;
 int socket_kernel_memory;
 int socket_memory_stick;
+t_list* sockets_memory_sticks;
 
 int segment_max_size;
 
 int main(int argc, char *argv[])
 {
 
-    if (argc < 2)
+    if (argc < 3)
     {
         fprintf(stderr, "Uso: %s [Identificador]\n", argv[0]);
         return 1;
@@ -33,6 +34,7 @@ int main(int argc, char *argv[])
     char *log_filename = string_from_format("cpu_%s.log", argv[2]);
     logger = log_create(log_filename, "CPU", true, log_level);
     free(log_filename);
+    sockets_memory_sticks = list_create();
 
     socket_kernel_scheduler = CrearConexion(ip_kernel_scheduler, puerto_kernel_scheduler);
     EnviarOpCode(socket_kernel_scheduler, CPU_A_KERNEL_SCHEDULER);
@@ -41,13 +43,26 @@ int main(int argc, char *argv[])
     socket_kernel_memory = CrearConexion(ip_kernel_memory, puerto_kernel_memory);
     EnviarOpCode(socket_kernel_memory, CPU_A_KERNEL_MEMORY);
 
+    // Recibimos la lista inicial de Memory Sticks del Kernel Memory
     int op_km = RecibirOperacion(socket_kernel_memory);
     if (op_km == NUEVO_MEMORY_STICK)
     {
-        t_list *sticks = RecibirPaquete(socket_kernel_memory);
-        list_destroy_and_destroy_elements(sticks, free);
-    }
+    t_list* valores_sticks = RecibirPaquete(socket_kernel_memory);
+    int cant_sticks = *(int*)list_get(valores_sticks, 0);
+    int idx = 1;
+    for (int i = 0; i < cant_sticks; i++) {
+        uint32_t tamanio  = *(uint32_t*)list_get(valores_sticks, idx++);
+        uint32_t base     = *(uint32_t*)list_get(valores_sticks, idx++);
+        int puerto_stick  = *(int*)list_get(valores_sticks, idx++);
+        char* ip_stick    = (char*)list_get(valores_sticks, idx++);
 
+        int socket_stick = CrearConexion(ip_stick, puerto_stick);
+        EnviarOpCode(socket_stick, CPU_A_MEMORY_STICK);
+        list_add(sockets_memory_sticks, (void*)(intptr_t)socket_stick);
+        log_info(logger, "## Conectado a Memory Stick en %s:%d", ip_stick, puerto_stick);
+    }
+    list_destroy_and_destroy_elements(valores_sticks, free);
+    }
     // socket_memory_stick = CrearConexion(ip_memory_stick, puerto_memory_stick);
     // EnviarOpCode(socket_memory_stick, CPU_A_MEMORY_STICK);
 

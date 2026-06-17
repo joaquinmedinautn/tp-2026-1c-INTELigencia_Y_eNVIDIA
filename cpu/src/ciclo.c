@@ -501,6 +501,56 @@ int execute(t_instruccion *inst)
 
         return 0; // Retornamos 0 para que el ciclo incremente el Program Counter
     }
+    else if (strcmp(inst->nombre, "MOV_OUT") == 0)
+    {
+    uint32_t dir_logica = obtener_valor_registro("DI");
+    uint32_t valor = obtener_valor_registro(inst->params[0]);
+    int tamanio = tamanio_registro(inst->params[0]);
+    uint32_t dir_fisica;
+
+    // 1. Traducir la dirección Lógica a Física usando la MMU
+    if (mmu_traducir(dir_logica, tamanio, &dir_fisica) == -1)
+    {
+        log_error(logger, "## PID: %d - Error de MMU: Segmentation Fault", pid_actual);
+        t_paquete *paq_pid = CrearPaquete(CPU_PID_DEVUELTO);
+        AgregarAPaquete(paq_pid, &pid_actual, sizeof(int));
+        char *motivo = "SEG_FAULT";
+        AgregarAPaquete(paq_pid, motivo, strlen(motivo) + 1);
+        EnviarPaquete(paq_pid, socket_kernel_scheduler);
+        EliminarPaquete(paq_pid);
+        return 2;
+    }
+
+    // 2. Preparar el dato a escribir según el tamaño del registro
+    uint8_t val8 = (uint8_t)valor;
+    void *dato = (tamanio == 1) ? (void *)&val8 : (void *)&valor;
+
+    // 3. ESCRIBIR en Kernel Memory usando la Dirección Física
+    t_paquete *paquete = CrearPaquete(ESCRIBIR);
+    AgregarAPaquete(paquete, &pid_actual, sizeof(uint32_t));
+    AgregarAPaquete(paquete, &dir_fisica, sizeof(uint32_t));
+    AgregarAPaquete(paquete, &tamanio, sizeof(uint32_t));
+    AgregarAPaquete(paquete, dato, tamanio);
+    EnviarPaquete(paquete, socket_kernel_memory);
+    EliminarPaquete(paquete);
+
+    int operacion = RecibirOperacion(socket_kernel_memory);
+    if (operacion == SEGMENTATION_FAULT)
+    {
+        t_paquete *paq_pid = CrearPaquete(CPU_PID_DEVUELTO);
+        AgregarAPaquete(paq_pid, &pid_actual, sizeof(int));
+        char *motivo = "SEG_FAULT";
+        AgregarAPaquete(paq_pid, motivo, strlen(motivo) + 1);
+        EnviarPaquete(paq_pid, socket_kernel_scheduler);
+        EliminarPaquete(paq_pid);
+        return 2;
+    }
+
+    log_info(logger, "PID: %d - Acción: ESCRIBIR - Dirección Física: %d - Valor: %d",
+             pid_actual, dir_fisica, valor);
+
+    return 0;
+    }
     else if (strcmp(inst->nombre, "COPY_MEM") == 0)
     {
         uint32_t tamanio = obtener_valor_registro(inst->params[0]);
