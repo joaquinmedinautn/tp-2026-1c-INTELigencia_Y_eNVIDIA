@@ -17,6 +17,8 @@ int socket_memory_stick;
 t_list* sockets_memory_sticks;
 int socket_kernel_interrupt;
 int segment_max_size;
+int socket_kernel_memory_notif;
+pthread_mutex_t mutex_memory_sticks = PTHREAD_MUTEX_INITIALIZER;
 
 void* escuchar_interrupciones(void* arg) {
     while (1) {
@@ -36,6 +38,31 @@ void* escuchar_interrupciones(void* arg) {
     return NULL;
 }
 
+void* escuchar_nuevos_sticks(void* arg) {
+    while (1) {
+        int operacion = RecibirOperacion(socket_kernel_memory_notif);
+        if (operacion == -1 || operacion == DESCONEXION) break;
+
+        if (operacion == NUEVO_MEMORY_STICK) {
+            t_list* valores = RecibirPaquete(socket_kernel_memory_notif);
+            uint32_t tamanio   = *(uint32_t*)list_get(valores, 0);
+            uint32_t base      = *(uint32_t*)list_get(valores, 1);
+            int puerto_stick   = *(int*)list_get(valores, 2);
+            char* ip_stick     = (char*)list_get(valores, 3);
+
+            int socket_stick = CrearConexion(ip_stick, puerto_stick);
+            EnviarOpCode(socket_stick, CPU_A_MEMORY_STICK);
+
+            pthread_mutex_lock(&mutex_memory_sticks);
+            list_add(sockets_memory_sticks, (void*)(intptr_t)socket_stick);
+            pthread_mutex_unlock(&mutex_memory_sticks);
+
+            log_info(logger, "## Nuevo Memory Stick conectado en %s:%d", ip_stick, puerto_stick);
+            list_destroy_and_destroy_elements(valores, free);
+        }
+    }
+    return NULL;
+}
 
 int main(int argc, char *argv[])
 {
@@ -83,7 +110,7 @@ int main(int argc, char *argv[])
 
 
     // ==========================================================
-    // CONEXIÓN KERNEL MEMORY Y MEMORY STICKS (Tu código intacto)
+    // CONEXIÓN KERNEL MEMORY Y MEMORY STICKS 
     // ==========================================================
     socket_kernel_memory = CrearConexion(ip_kernel_memory, puerto_kernel_memory);
     EnviarOpCode(socket_kernel_memory, CPU_A_KERNEL_MEMORY);
@@ -107,6 +134,13 @@ int main(int argc, char *argv[])
         }
         list_destroy_and_destroy_elements(valores_sticks, free);
     }
+
+    socket_kernel_memory_notif = CrearConexion(ip_kernel_memory, puerto_kernel_memory);
+    EnviarOpCode(socket_kernel_memory_notif, CPU_A_KERNEL_MEMORY_NOTIFICACIONES);
+
+    pthread_t hilo_sticks;
+    pthread_create(&hilo_sticks, NULL, escuchar_nuevos_sticks, NULL);
+    pthread_detach(hilo_sticks);
 
     // ==========================================================
     // BUCLE PRINCIPAL DE DISPATCH
