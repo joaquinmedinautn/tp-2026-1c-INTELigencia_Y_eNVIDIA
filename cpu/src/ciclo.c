@@ -697,6 +697,20 @@ void iniciar_ciclo(int pid)
     contexto.SI = ctx_recibido->SI;
     contexto.DI = ctx_recibido->DI;
 
+     // Reconstruimos la tabla de segmentos del proceso
+    if (contexto.tabla_segmentos != NULL) {
+        list_destroy_and_destroy_elements(contexto.tabla_segmentos, free);
+    }
+    contexto.tabla_segmentos = list_create();
+
+    int cant_segmentos = *(int*)list_get(valores_ctx, 1);
+    for (int i = 0; i < cant_segmentos; i++) {
+        t_segmento* seg_recibido = (t_segmento*)list_get(valores_ctx, 2 + i);
+        t_segmento* nuevo_seg = malloc(sizeof(t_segmento));
+        memcpy(nuevo_seg, seg_recibido, sizeof(t_segmento));
+        list_add(contexto.tabla_segmentos, nuevo_seg);
+    }
+    list_destroy_and_destroy_elements(valores_ctx, free);
 
     // Loop principal
     while (1)
