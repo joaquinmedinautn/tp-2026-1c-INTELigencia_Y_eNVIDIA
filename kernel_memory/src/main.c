@@ -11,10 +11,11 @@ int socket_servidor;
 int puerto_escucha;
 int socket_kernel_scheduler;
 int socket_memory_stick;
-int socket_cpu;
+int socket_cpu = -1;
 int socket_swap;
 int socket_misterioso;
 int instruction_delay;
+int socket_cpu_notif = -1;
 
 
 int segment_max_size;
@@ -510,6 +511,10 @@ void atender_cliente(void* void_socket) {
             EnviarPaquete(paq_lista, socket_cpu);
             EliminarPaquete(paq_lista);
             break;
+        case CPU_A_KERNEL_MEMORY_NOTIFICACIONES:
+         socket_cpu_notif = socket_cliente;
+         log_info(logger, "## CPU Conectada (Canal Asincrónico de Notificaciones)");
+         break;
         case SWAP:{
             socket_swap = socket_cliente;
 
@@ -569,16 +574,18 @@ void atender_cliente(void* void_socket) {
             pthread_mutex_unlock(&mutex_huecos);
 
             log_info(logger, "## Memory Stick de %d bytes mapeado en base %d", tamanio_stick, base_nueva);
-            if(socket_cpu  != -1){
+            if(socket_cpu_notif != -1){
                 t_paquete* paq_cpu = CrearPaquete(NUEVO_MEMORY_STICK);
 
                 AgregarAPaquete(paq_cpu, &tamanio_stick, sizeof(uint32_t));
                 AgregarAPaquete(paq_cpu, &base_nueva, sizeof(uint32_t));
                 AgregarAPaquete(paq_cpu, &puerto_stick, sizeof(int));
                 AgregarAPaquete(paq_cpu, &ip_stick, strlen(ip_stick) + 1);
-                EnviarPaquete(paq_cpu,socket_cpu);
+                EnviarPaquete(paq_cpu,socket_cpu_notif);
                 EliminarPaquete(paq_cpu);
                 log_info(logger,  "## Notificación de nuevo hardware enviada a la CPU");
+            } else {
+                log_warning(logger,  "## Se concecto un Memory Stick pero la CPU no habrío su canal de notificaciones");
             }
             if (socket_kernel_scheduler_eventos != -1) {
                 EnviarOpCode(socket_kernel_scheduler_eventos, NUEVO_MEMORY_STICK);

@@ -62,6 +62,7 @@ typedef enum {
     SWAP,
     CPU_A_MEMORY_STICK,
     CPU_A_KERNEL_SCHEDULER_INTERRUPT,
+    CPU_A_KERNEL_MEMORY_NOTIFICACIONES,
 
     // Gestión de Procesos
     CREAR_PROCESO,
