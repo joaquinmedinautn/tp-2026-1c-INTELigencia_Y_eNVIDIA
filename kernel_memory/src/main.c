@@ -601,31 +601,6 @@ void atender_cliente(void *void_socket)
         EnviarPaquete(paq_lista, socket_cpu);
         EliminarPaquete(paq_lista);
         break;
-    case SWAP:
-    {
-        socket_swap = socket_cliente;
-
-        t_list *valores_swap = RecibirPaquete(socket_cliente);
-        swap_block_size = *(int *)list_get(valores_swap, 0);
-        swap_file_size = *(int *)list_get(valores_swap, 1);
-
-        cant_bloques_swap = swap_file_size / swap_block_size;
-
-        int bytes_bitarray_swap = cant_bloques_swap / 8;
-        if (cant_bloques_swap % 8 != 0)
-            bytes_bitarray_swap++;
-
-        void *espacio_bitarray_swap = malloc(bytes_bitarray_swap);
-        memset(espacio_bitarray_swap, 0, bytes_bitarray_swap);
-
-        bitmap_swap = bitarray_create_with_mode(espacio_bitarray_swap, cant_bloques_swap, LSB_FIRST);
-        pthread_mutex_init(&mutex_bitmap_swap, NULL);
-
-        log_info(logger, "## SWAP Conectado - Bloques: %d, Tamaño total: %d bytes", cant_bloques_swap, swap_file_size);
-
-        list_destroy_and_destroy_elements(valores_swap, free);
-        break;
-    }
     case KERNEL_SCHEDULER_EVENTOS:
     {
         socket_kernel_scheduler_eventos = socket_cliente;
@@ -687,15 +662,7 @@ void atender_cliente(void *void_socket)
         list_destroy_and_destroy_elements(valores, free);
         return;
     }
-        if (socket_kernel_scheduler_eventos != -1)
-        {
-            EnviarOpCode(socket_kernel_scheduler_eventos, NUEVO_MEMORY_STICK);
-        }
-        list_destroy_and_destroy_elements(valores, free);
-        return;
-    }
-
-default:
+    default:
     log_error(logger, "Código de operación desconocido al iniciar");
     close(socket_cliente);
     return;
