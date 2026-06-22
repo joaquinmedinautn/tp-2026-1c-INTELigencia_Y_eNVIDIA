@@ -95,18 +95,21 @@ int main(int argc, char *argv[])
     socket_kernel_scheduler = CrearConexion(ip_kernel_scheduler, puerto_kernel_scheduler);
     EnviarOpCode(socket_kernel_scheduler, CPU_A_KERNEL_SCHEDULER);
     send(socket_kernel_scheduler, &id_cpu, sizeof(int), 0);
+    printf("Se conecto al kernel scheduler\n");
 
     // ==========================================================
     // 2. CONEXIÓN INTERRUPT (Exclusiva para desalojos/quantum)
     // ==========================================================
     socket_kernel_interrupt = CrearConexion(ip_kernel_scheduler, puerto_kernel_scheduler);
     EnviarOpCode(socket_kernel_interrupt, CPU_A_KERNEL_SCHEDULER_INTERRUPT);
-    send(socket_kernel_interrupt, &id_cpu, sizeof(int), 0); 
+    send(socket_kernel_interrupt, &id_cpu, sizeof(int), 0);
+    printf("Se conecto socket para desalojos\n");
 
     // 3. NACIMIENTO DEL HILO DE INTERRUPCIONES (Una sola vez)
     pthread_t hilo_interrupciones;
     pthread_create(&hilo_interrupciones, NULL, escuchar_interrupciones, NULL);
     pthread_detach(hilo_interrupciones);
+    printf("Se creo el hilo de interrupciones\n");
 
 
     // ==========================================================
@@ -119,11 +122,10 @@ int main(int argc, char *argv[])
     if (op_km == NUEVO_MEMORY_STICK)
     {
         t_list* valores_sticks = RecibirPaquete(socket_kernel_memory);
-        int cant_sticks = *(int*)list_get(valores_sticks, 0);
-        int idx = 1;
+        segment_max_size = *(int*)list_get(valores_sticks, 0);
+        int cant_sticks = *(int*)list_get(valores_sticks, 1);
+        int idx = 2;
         for (int i = 0; i < cant_sticks; i++) {
-            uint32_t tamanio  = *(uint32_t*)list_get(valores_sticks, idx++);
-            uint32_t base     = *(uint32_t*)list_get(valores_sticks, idx++);
             int puerto_stick  = *(int*)list_get(valores_sticks, idx++);
             char* ip_stick    = (char*)list_get(valores_sticks, idx++);
 
@@ -183,11 +185,10 @@ void ObtenerConfig(char* path)
     ip_kernel_memory = strdup(config_get_string_value(config, "IP_KERNEL_MEMORY"));
     puerto_kernel_memory = config_get_int_value(config, "PUERTO_KERNEL_MEMORY");
 
-    segment_max_size = config_get_int_value(config, "SEGMENT_MAX_SIZE");
-    // ip_memory_stick = config_get_string_value(config, "IP_MEMORY_STICK");
-    // puerto_memory_stick = config_get_int_value(config, "PUERTO_MEMORY_STICK");
+    ip_memory_stick = strdup(config_get_string_value(config, "IP_MEMORY_STICK"));
+    puerto_memory_stick = config_get_int_value(config, "PUERTO_MEMORY_STICK");
 
     log_level = log_level_from_string(config_get_string_value(config, "LOG_LEVEL"));
 
-    config_destroy(config);
+    //config_destroy(config);
 }

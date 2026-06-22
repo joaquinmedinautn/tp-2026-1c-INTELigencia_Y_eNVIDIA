@@ -709,6 +709,14 @@ void *AtenderCPU(void *args)
                 recv(cpu->socket, &pid, sizeof(int), MSG_WAITALL);
                 log_info(logger, "## (%d) Proceso devuelto por CPU %d", pid, cpu->id_cpu);
 
+                // leer el motivo que manda la CPU
+                int size_motivo;
+                recv(cpu->socket, &size_motivo, sizeof(int), MSG_WAITALL);
+                char *motivo = malloc(size_motivo);
+                recv(cpu->socket, motivo, size_motivo, MSG_WAITALL);
+
+                log_info(logger, "## (%d) Proceso devuelto por CPU %d - Motivo: %s", pid, cpu->id_cpu, motivo);
+
                 proceso *p = BuscarProceso(pid);
 
                 pthread_mutex_lock(&mutex_quantum);
@@ -717,6 +725,43 @@ void *AtenderCPU(void *args)
 
                 cpu->ocupado = false;
                 cpu->pid_actual = -1;
+
+                if (p == NULL)
+                {
+                    log_error(logger, "## CPU_PID_DEVUELTO: proceso %d no encontrado", pid);
+                    free(motivo);
+                    sem_post(&sem_cpu_disponible);
+                    break;
+                }
+
+                // si es SEG_FAULT, finalizar el proceso (no reencolar)
+                if (strcmp(motivo, "SEG_FAULT") == 0)
+                {
+                    pthread_mutex_lock(&mutex_kernel_memory);
+                    t_paquete *paquete = CrearPaquete(FINALIZAR_PROCESO);
+                    AgregarAPaquete(paquete, &pid, sizeof(int));
+                    EnviarPaquete(paquete, socket_kernel_memory);
+                    EliminarPaquete(paquete);
+                    pthread_mutex_unlock(&mutex_kernel_memory);
+
+                    CambiarEstado(p, EXIT);
+                    log_info(logger, "## (%d) finalizó su ejecución con motivo de SEG_FAULT", pid);
+
+                    pthread_mutex_lock(&mutex_procesos);
+                    list_remove_element(lista_procesos, p);
+                    pthread_mutex_unlock(&mutex_procesos);
+
+                    if (p->codigo_dinamico)
+                        free(p->codigo);
+                    free(p);
+
+                    free(motivo);
+                    sem_post(&sem_cpu_disponible);
+                    sem_post(&sem_memoria_disponible);
+                    break;
+                }
+
+                free(motivo);
 
                 pthread_mutex_lock(&mutex_compactacion);
                 bool en_compactacion = compactacion_en_curso;

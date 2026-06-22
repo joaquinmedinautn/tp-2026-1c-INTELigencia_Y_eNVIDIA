@@ -16,6 +16,10 @@ int mmu_traducir(uint32_t dir_logica, uint32_t tamanio, uint32_t *dir_fisica)
     uint32_t num_segmento = dir_logica / segment_max_size;
     uint32_t desplazamiento = dir_logica % segment_max_size;
 
+    if (contexto.tabla_segmentos == NULL) {
+        return -1; // SEG_FAULT: No hay tabla de segmentos inicializada
+    }
+    
     t_segmento *segmento_encontrado = NULL;
     for (int i = 0; i < list_size(contexto.tabla_segmentos); i++)
     {

@@ -62,7 +62,14 @@ int CrearConexion(char *ip, int puerto)
 
     snprintf(puerto_str, sizeof(puerto_str), "%d", puerto);
 
-    getaddrinfo(ip, puerto_str, &hints, &server_info);
+    int rc = getaddrinfo(ip, puerto_str, &hints, &server_info);
+
+    if (rc != 0)
+    {
+        // getaddrinfo falló: ip o puerto inválidos. NO usar server_info.
+        log_error(logger, "getaddrinfo falló para %s:%d (%s)", ip ? ip : "(null)", puerto, gai_strerror(rc));
+        return -1;
+    }
 
     int socket_cliente = socket(server_info->ai_family,
                                 server_info->ai_socktype,

@@ -9,6 +9,7 @@ t_log *logger;
 t_log_level log_level;
 int socket_cpu;
 int socket_kernel_memory;
+int memory_delay;
 
 void* espacio_almacenamiento;
 int tam_memoria;
@@ -23,7 +24,8 @@ void ObtenerConfig()
     ip_kernel_memory = strdup(config_get_string_value(config, "IP_KERNEL_MEMORY"));
     puerto_kernel_memory = config_get_int_value(config, "PUERTO_KERNEL_MEMORY");
 
-    config_destroy(config);
+    ip_propia = strdup(config_get_string_value(config, "IP_PROPIA"));
+    memory_delay = config_get_int_value(config, "MEMORY_DELAY");
 }
 
 void atender_peticiones(void* arg){
@@ -38,6 +40,7 @@ void atender_peticiones(void* arg){
         }
     switch(cod_op){
         case LEER:{
+            usleep(memory_delay * 1000);
                 t_list* valores = RecibirPaquete(socket_cliente);
                 uint32_t dir_fisica = *(uint32_t*)list_get(valores, 0);
                 uint32_t tamanio = *(uint32_t*)list_get(valores, 1);
@@ -58,6 +61,7 @@ void atender_peticiones(void* arg){
                 break;
         }
         case ESCRIBIR: { 
+            usleep(memory_delay * 1000);
                 t_list* valores = RecibirPaquete(socket_cliente);
                 uint32_t dir_fisica = *(uint32_t*)list_get(valores, 0);
                 uint32_t tamanio = *(uint32_t*)list_get(valores, 1);
@@ -65,7 +69,7 @@ void atender_peticiones(void* arg){
 
                 log_info(logger, "## Escritura de %d bytes", tamanio); 
                 
-                memcpy((char*)espacio_almacenamiento + dir_fisica, datos, tamanio),
+                memcpy((char*)espacio_almacenamiento + dir_fisica, datos, tamanio);
                 
                 EnviarOpCode(socket_cliente, MENSAJE); 
                 
@@ -103,7 +107,7 @@ int main(int argc, char* argv[]) {
     if(socket_kernel_memory > 0){
         t_paquete* paq_registro = CrearPaquete(NUEVO_MEMORY_STICK);
         AgregarAPaquete(paq_registro, &tam_memoria, sizeof(int));
-
+        
         //mando el puerto de escucha de este stick
         AgregarAPaquete(paq_registro, &puerto_escucha, sizeof(int));
         ip_propia = strdup(config_get_string_value(config, "IP_PROPIA"));
@@ -126,7 +130,7 @@ int main(int argc, char* argv[]) {
     int socket_cliente;
     while(1){
         socket_cliente = EsperarConexion(socket_servidor);
-        log_info(logger, "Se conecto el modulo de cpu");
+        log_info(logger, "Se conecto el modulo de cpu"); //agregue algo mas joaco
 
         pthread_t hilo;
         int* p_socket = malloc(sizeof(int));
