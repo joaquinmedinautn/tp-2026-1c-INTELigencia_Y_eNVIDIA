@@ -365,6 +365,32 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
             RecibirOperacion(socket_kernel_memory);
             pthread_mutex_unlock(&mutex_kernel_memory);
         }
+        else if (respuesta == ESPACIO_INSUFICIENTE)
+        {
+            // no hay memoria: el proceso debe finalizar (out of memory)
+            log_error(logger, "## (%d) MEM_ALLOC falló: espacio insuficiente", pid);
+
+            pthread_mutex_lock(&mutex_kernel_memory);
+            t_paquete *fin = CrearPaquete(FINALIZAR_PROCESO);
+            AgregarAPaquete(fin, &pid, sizeof(int));
+            EnviarPaquete(fin, socket_kernel_memory);
+            EliminarPaquete(fin);
+            pthread_mutex_unlock(&mutex_kernel_memory);
+
+            CambiarEstado(p, EXIT);
+            pthread_mutex_lock(&mutex_procesos);
+            list_remove_element(lista_procesos, p);
+            pthread_mutex_unlock(&mutex_procesos);
+            if (p->codigo_dinamico)
+                free(p->codigo);
+            free(p);
+
+            cpu->ocupado = false;
+            cpu->pid_actual = -1;
+            sem_post(&sem_cpu_disponible);
+            sem_post(&sem_memoria_disponible);
+            return; // no reencolar
+        }
 
         // en todos los casos reenviar el proceso a la MISMA CPU
         EncolarReady(p);
@@ -705,17 +731,15 @@ void *AtenderCPU(void *args)
         case CPU_PID_DEVUELTO:
             // La CPU terminó/devolvió un proceso
             {
-                int pid;
-                recv(cpu->socket, &pid, sizeof(int), MSG_WAITALL);
-                log_info(logger, "## (%d) Proceso devuelto por CPU %d", pid, cpu->id_cpu);
+                t_list *valores = RecibirPaquete(cpu->socket);
+                int pid = *(int *)list_get(valores, 0);
+                char *motivo_ptr = list_get(valores, 1);
 
-                // leer el motivo que manda la CPU
-                int size_motivo;
-                recv(cpu->socket, &size_motivo, sizeof(int), MSG_WAITALL);
-                char *motivo = malloc(size_motivo);
-                recv(cpu->socket, motivo, size_motivo, MSG_WAITALL);
+                char *motivo = strdup(motivo_ptr);
 
                 log_info(logger, "## (%d) Proceso devuelto por CPU %d - Motivo: %s", pid, cpu->id_cpu, motivo);
+
+                list_destroy_and_destroy_elements(valores, free);
 
                 proceso *p = BuscarProceso(pid);
 
@@ -755,29 +779,29 @@ void *AtenderCPU(void *args)
                         free(p->codigo);
                     free(p);
 
-                    free(motivo);
                     sem_post(&sem_cpu_disponible);
                     sem_post(&sem_memoria_disponible);
                     break;
                 }
-
-                free(motivo);
-
-                pthread_mutex_lock(&mutex_compactacion);
-                bool en_compactacion = compactacion_en_curso;
-                pthread_mutex_unlock(&mutex_compactacion);
-
-                if (en_compactacion)
+                else // INTERRUPCION
                 {
-                    // desalojado por compactación: va al PRINCIPIO de su cola, no libera CPU todavía
-                    EncolarReadyAlPrincipio(p);
-                    sem_post(&sem_cpus_desalojadas); // confirmar a IniciarCompactacion
+                    pthread_mutex_lock(&mutex_compactacion);
+                    bool en_compactacion = compactacion_en_curso;
+                    pthread_mutex_unlock(&mutex_compactacion);
+
+                    if (en_compactacion)
+                    {
+                        EncolarReadyAlPrincipio(p);
+                        sem_post(&sem_cpus_desalojadas);
+                    }
+                    else
+                    {
+                        EncolarReady(p);
+                        sem_post(&sem_cpu_disponible);
+                    }
                 }
-                else
-                {
-                    EncolarReady(p);
-                    sem_post(&sem_cpu_disponible);
-                }
+
+                list_destroy_and_destroy_elements(valores, free);
             }
             break;
 

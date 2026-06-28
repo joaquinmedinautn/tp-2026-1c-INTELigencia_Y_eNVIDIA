@@ -92,7 +92,10 @@ void consolidar_huecos_libres()
 }
 
 t_hueco_libre *buscar_hueco_libre(uint32_t tamanio_pedido)
-{
+{   
+    log_info(logger, "DEBUG: Buscando hueco para %d bytes. Huecos disponibles en lista: %d", 
+             tamanio_pedido, list_size(lista_huecos_libres));
+            
     t_hueco_libre *hueco_seleccionado = NULL;
 
     for (int i = 0; i < list_size(lista_huecos_libres); i++)
@@ -119,6 +122,9 @@ t_hueco_libre *buscar_hueco_libre(uint32_t tamanio_pedido)
                 }
             }
         }
+    }
+    if (hueco_seleccionado == NULL) {
+        log_warning(logger, "DEBUG: ¡No se encontró hueco adecuado para %d bytes!", tamanio_pedido);
     }
     return hueco_seleccionado;
 }
@@ -554,6 +560,17 @@ void atender_cliente(void *void_socket)
         t_paquete *paq_lista = CrearPaquete(NUEVO_MEMORY_STICK);
         AgregarAPaquete(paq_lista, &segment_max_size, sizeof(int));
         AgregarAPaquete(paq_lista, &cant_sticks, sizeof(int));
+
+        for(int i = 0; i < cant_sticks; i++ ){
+            t_memory_stick* s = list_get(lista_memory_sticks, i);
+            AgregarAPaquete(paq_lista, &s->tamanio, sizeof(uint32_t));
+            AgregarAPaquete(paq_lista, &s->base_global, sizeof(uint32_t));
+            AgregarAPaquete(paq_lista, &s->puerto, sizeof(int));
+            AgregarAPaquete(paq_lista, s->ip, strlen(s->ip) + 1); 
+        }
+
+        pthread_mutex_unlock(&mutex_memory_sticks);
+
         EnviarPaquete(paq_lista, socket_cpu);
         EliminarPaquete(paq_lista);
         break;
@@ -561,8 +578,7 @@ void atender_cliente(void *void_socket)
         socket_cpu_notif = socket_cliente;
         log_info(logger, "## CPU Conectada (Canal Asincrónico de Notificaciones)");
         break;
-    case SWAP:
-    {
+    case SWAP:{
         socket_swap = socket_cliente;
 
         t_list *valores_swap = RecibirPaquete(socket_cliente);
@@ -585,22 +601,7 @@ void atender_cliente(void *void_socket)
 
         list_destroy_and_destroy_elements(valores_swap, free);
         break;
-
-        for (int i = 0; i < cant_sticks; i++)
-        {
-            t_memory_stick *s = list_get(lista_memory_sticks, i);
-            AgregarAPaquete(paq_lista, &s->tamanio, sizeof(uint32_t));
-            AgregarAPaquete(paq_lista, &s->base_global, sizeof(uint32_t));
-            AgregarAPaquete(paq_lista, &s->puerto, sizeof(int));
-            AgregarAPaquete(paq_lista, s->ip, strlen(s->ip) + 1);
-            }
-
-    }
-        pthread_mutex_unlock(&mutex_memory_sticks);
-
-        EnviarPaquete(paq_lista, socket_cpu);
-        EliminarPaquete(paq_lista);
-        break;
+     }   
     case KERNEL_SCHEDULER_EVENTOS:
     {
         socket_kernel_scheduler_eventos = socket_cliente;
@@ -762,6 +763,17 @@ while (1)
             AgregarAPaquete(res, &ctx->BX, sizeof(uint8_t));
             AgregarAPaquete(res, &ctx->CX, sizeof(uint8_t));
             AgregarAPaquete(res, &ctx->DX, sizeof(uint8_t));
+
+            int cant_segmentos = 0;
+            if (ctx->tabla_segmentos != NULL) {
+                cant_segmentos = list_size(ctx->tabla_segmentos);
+            }
+            AgregarAPaquete(res, &cant_segmentos, sizeof(int)); 
+
+            for (int i = 0; i < cant_segmentos; i++) {
+                t_segmento* seg = list_get(ctx->tabla_segmentos, i);
+                AgregarAPaquete(res, seg, sizeof(t_segmento)); 
+            }   
             EnviarPaquete(res, socket_cliente);
 
             EliminarPaquete(res);
@@ -770,12 +782,12 @@ while (1)
         else
         {
             log_error(logger, "Error: CPU solicitó contexto para un PID inexistente: %d", pid);
-            //  envio un código de error a la CPU
         }
 
         list_destroy_and_destroy_elements(valores, free);
         break;
     }
+    
     case CPU_A_KERNEL_MEMORY:
     { // el que usa la CPU en actualizar_contexto()
         t_list *valores = RecibirPaquete(socket_cliente);
@@ -965,6 +977,9 @@ while (1)
                 t_hueco_libre *h = list_get(lista_huecos_libres, i);
                 espacio_libre_total += h->tamanio;
             }
+
+            log_info(logger, "DEBUG: Fallo de asignación. Espacio total libre: %d bytes. Pedido: %d bytes.", 
+                     espacio_libre_total, tamanio_pedido);
 
             if (espacio_libre_total >= tamanio_pedido)
             {

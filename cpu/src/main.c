@@ -126,6 +126,9 @@ int main(int argc, char *argv[])
         int cant_sticks = *(int*)list_get(valores_sticks, 1);
         int idx = 2;
         for (int i = 0; i < cant_sticks; i++) {
+            uint32_t tamanio  = *(uint32_t*)list_get(valores_sticks, idx++);
+            uint32_t base     = *(uint32_t*)list_get(valores_sticks, idx++);
+            
             int puerto_stick  = *(int*)list_get(valores_sticks, idx++);
             char* ip_stick    = (char*)list_get(valores_sticks, idx++);
 
