@@ -708,10 +708,10 @@ void iniciar_ciclo(int pid)
     }
     contexto.tabla_segmentos = list_create();
 
-    int cant_segmentos = *(int*)list_get(valores_ctx, 1);
+    int cant_segmentos = *(int*)list_get(valores_ctx, 11);
     log_info(logger, "DEBUG: cant_segmentos recibido = %d", cant_segmentos);
     for (int i = 0; i < cant_segmentos; i++) {
-        t_segmento* seg_recibido = (t_segmento*)list_get(valores_ctx, 2 + i);
+        t_segmento* seg_recibido = (t_segmento*)list_get(valores_ctx, 12 + i);
         t_segmento* nuevo_seg = malloc(sizeof(t_segmento));
         memcpy(nuevo_seg, seg_recibido, sizeof(t_segmento));
         list_add(contexto.tabla_segmentos, nuevo_seg);

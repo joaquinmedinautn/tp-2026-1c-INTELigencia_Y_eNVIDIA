@@ -16,9 +16,9 @@ int tam_memoria;
 
 char* ip_propia;
 
-void ObtenerConfig()
+void ObtenerConfig(char* path)
 {
-    config = config_create("memory_stick.config");
+    config = config_create(path);
     puerto_escucha = config_get_int_value(config, "PUERTO_ESCUCHA");
     log_level = log_level_from_string(config_get_string_value(config, "LOG_LEVEL"));
     ip_kernel_memory = strdup(config_get_string_value(config, "IP_KERNEL_MEMORY"));
@@ -39,6 +39,10 @@ void atender_peticiones(void* arg){
             break;
         }
     switch(cod_op){
+        case CPU_A_MEMORY_STICK:{
+            log_info(logger, "## CPU conectada al Memory Stick");
+            break;
+            }
         case LEER:{
             usleep(memory_delay * 1000);
                 t_list* valores = RecibirPaquete(socket_cliente);
@@ -87,19 +91,24 @@ void atender_peticiones(void* arg){
 
 int main(int argc, char* argv[]) {
     
-    if(argc < 2){
-        printf("Error: Faltan Argumentos");
+    if (argc < 3) {
+        printf("Uso: %s [Archivo Config] [Tamanio]\n", argv[0]);
         return EXIT_FAILURE;
     }
 
-    tam_memoria = atoi(argv[1]);
+    tam_memoria = atoi(argv[2]);
+
+    if (tam_memoria <= 0) {
+        printf("Error: tamaño inválido '%s'\n", argv[2]);
+        return EXIT_FAILURE;
+    }
 
     espacio_almacenamiento = malloc(tam_memoria);
     memset(espacio_almacenamiento, 0, tam_memoria);
 
     saludar("memory_stick");
 
-    ObtenerConfig();
+    ObtenerConfig(argv[1]);
 
     logger = log_create("memory_stick.log", "MEMORY_STICK", true, log_level);
 
@@ -110,7 +119,6 @@ int main(int argc, char* argv[]) {
         
         //mando el puerto de escucha de este stick
         AgregarAPaquete(paq_registro, &puerto_escucha, sizeof(int));
-        ip_propia = strdup(config_get_string_value(config, "IP_PROPIA"));
         AgregarAPaquete(paq_registro,  ip_propia, strlen(ip_propia) + 1);
         //mando el ip de este stick
 

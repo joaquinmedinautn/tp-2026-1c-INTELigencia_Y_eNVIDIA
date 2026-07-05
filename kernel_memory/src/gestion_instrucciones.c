@@ -21,6 +21,7 @@ void cargar_instrucciones(uint32_t pid, char* path_relativo) {
     // 2. creo y Limpio el contexto de ejecucion 
     t_contexto* contexto = malloc(sizeof(t_contexto));
     contexto->instrucciones = list_create();
+    contexto->tabla_segmentos = NULL;
     
     // inicializar registros en 0 
     contexto->PC = 0;

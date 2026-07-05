@@ -14,18 +14,21 @@ t_log *logger;
 int socket_kernel_scheduler;
 int socket_kernel_memory;
 int socket_memory_stick;
-t_list* sockets_memory_sticks;
+t_list *sockets_memory_sticks;
 int socket_kernel_interrupt;
 int segment_max_size;
 int socket_kernel_memory_notif;
 pthread_mutex_t mutex_memory_sticks = PTHREAD_MUTEX_INITIALIZER;
 
-void* escuchar_interrupciones(void* arg) {
-    while (1) {
+void *escuchar_interrupciones(void *arg)
+{
+    while (1)
+    {
         // Leemos EXCLUSIVAMENTE del socket de interrupciones
         int operacion = RecibirOperacion(socket_kernel_interrupt);
-        
-        if (operacion == -1 || operacion == DESCONEXION) {
+
+        if (operacion == -1 || operacion == DESCONEXION)
+        {
             log_error(logger, "Se desconectó el canal de interrupciones");
             break;
         }
@@ -38,23 +41,27 @@ void* escuchar_interrupciones(void* arg) {
     return NULL;
 }
 
-void* escuchar_nuevos_sticks(void* arg) {
-    while (1) {
+void *escuchar_nuevos_sticks(void *arg)
+{
+    while (1)
+    {
         int operacion = RecibirOperacion(socket_kernel_memory_notif);
-        if (operacion == -1 || operacion == DESCONEXION) break;
+        if (operacion == -1 || operacion == DESCONEXION)
+            break;
 
-        if (operacion == NUEVO_MEMORY_STICK) {
-            t_list* valores = RecibirPaquete(socket_kernel_memory_notif);
-            uint32_t tamanio   = *(uint32_t*)list_get(valores, 0);
-            uint32_t base      = *(uint32_t*)list_get(valores, 1);
-            int puerto_stick   = *(int*)list_get(valores, 2);
-            char* ip_stick     = (char*)list_get(valores, 3);
+        if (operacion == NUEVO_MEMORY_STICK)
+        {
+            t_list *valores = RecibirPaquete(socket_kernel_memory_notif);
+            uint32_t tamanio = *(uint32_t *)list_get(valores, 0);
+            uint32_t base = *(uint32_t *)list_get(valores, 1);
+            int puerto_stick = *(int *)list_get(valores, 2);
+            char *ip_stick = (char *)list_get(valores, 3);
 
             int socket_stick = CrearConexion(ip_stick, puerto_stick);
             EnviarOpCode(socket_stick, CPU_A_MEMORY_STICK);
 
             pthread_mutex_lock(&mutex_memory_sticks);
-            list_add(sockets_memory_sticks, (void*)(intptr_t)socket_stick);
+            list_add(sockets_memory_sticks, (void *)(intptr_t)socket_stick);
             pthread_mutex_unlock(&mutex_memory_sticks);
 
             log_info(logger, "## Nuevo Memory Stick conectado en %s:%d", ip_stick, puerto_stick);
@@ -72,7 +79,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Uso: %s [Archivo Config] [Identificador]\n", argv[0]);
         return 1;
     }
-    
+
     // Obtenemos el ID de CPU del segundo argumento
     int id_cpu = atoi(argv[2]);
 
@@ -84,14 +91,14 @@ int main(int argc, char *argv[])
     char *log_filename = string_from_format("cpu_%d.log", id_cpu);
     logger = log_create(log_filename, "CPU", true, log_level);
     free(log_filename);
-    
+
     sockets_memory_sticks = list_create();
     printf("Se crea la lista de memory sitsck\n"); // debug
 
     // ==========================================================
     // 1. CONEXIÓN DISPATCH (Principal para Procesos y Syscalls)
     // ==========================================================
-    
+
     socket_kernel_scheduler = CrearConexion(ip_kernel_scheduler, puerto_kernel_scheduler);
     EnviarOpCode(socket_kernel_scheduler, CPU_A_KERNEL_SCHEDULER);
     send(socket_kernel_scheduler, &id_cpu, sizeof(int), 0);
@@ -111,9 +118,8 @@ int main(int argc, char *argv[])
     pthread_detach(hilo_interrupciones);
     printf("Se creo el hilo de interrupciones\n");
 
-
     // ==========================================================
-    // CONEXIÓN KERNEL MEMORY Y MEMORY STICKS 
+    // CONEXIÓN KERNEL MEMORY Y MEMORY STICKS
     // ==========================================================
     socket_kernel_memory = CrearConexion(ip_kernel_memory, puerto_kernel_memory);
     EnviarOpCode(socket_kernel_memory, CPU_A_KERNEL_MEMORY);
@@ -121,20 +127,21 @@ int main(int argc, char *argv[])
     int op_km = RecibirOperacion(socket_kernel_memory);
     if (op_km == NUEVO_MEMORY_STICK)
     {
-        t_list* valores_sticks = RecibirPaquete(socket_kernel_memory);
-        segment_max_size = *(int*)list_get(valores_sticks, 0);
-        int cant_sticks = *(int*)list_get(valores_sticks, 1);
+        t_list *valores_sticks = RecibirPaquete(socket_kernel_memory);
+        segment_max_size = *(int *)list_get(valores_sticks, 0);
+        int cant_sticks = *(int *)list_get(valores_sticks, 1);
         int idx = 2;
-        for (int i = 0; i < cant_sticks; i++) {
-            uint32_t tamanio  = *(uint32_t*)list_get(valores_sticks, idx++);
-            uint32_t base     = *(uint32_t*)list_get(valores_sticks, idx++);
-            
-            int puerto_stick  = *(int*)list_get(valores_sticks, idx++);
-            char* ip_stick    = (char*)list_get(valores_sticks, idx++);
+        for (int i = 0; i < cant_sticks; i++)
+        {
+            uint32_t tamanio = *(uint32_t *)list_get(valores_sticks, idx++);
+            uint32_t base = *(uint32_t *)list_get(valores_sticks, idx++);
+
+            int puerto_stick = *(int *)list_get(valores_sticks, idx++);
+            char *ip_stick = (char *)list_get(valores_sticks, idx++);
 
             int socket_stick = CrearConexion(ip_stick, puerto_stick);
             EnviarOpCode(socket_stick, CPU_A_MEMORY_STICK);
-            list_add(sockets_memory_sticks, (void*)(intptr_t)socket_stick);
+            list_add(sockets_memory_sticks, (void *)(intptr_t)socket_stick);
             log_info(logger, "## Conectado a Memory Stick en %s:%d", ip_stick, puerto_stick);
         }
         list_destroy_and_destroy_elements(valores_sticks, free);
@@ -173,7 +180,7 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-void ObtenerConfig(char* path)
+void ObtenerConfig(char *path)
 {
     config = config_create(path);
     if (config == NULL)
@@ -193,5 +200,5 @@ void ObtenerConfig(char* path)
 
     log_level = log_level_from_string(config_get_string_value(config, "LOG_LEVEL"));
 
-    //config_destroy(config);
+    // config_destroy(config);
 }
