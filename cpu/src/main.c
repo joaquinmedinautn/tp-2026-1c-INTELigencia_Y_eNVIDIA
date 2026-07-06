@@ -20,6 +20,8 @@ int segment_max_size;
 int socket_kernel_memory_notif;
 pthread_mutex_t mutex_memory_sticks = PTHREAD_MUTEX_INITIALIZER;
 
+int codigo_interrupcion = 0;
+
 void *escuchar_interrupciones(void *arg)
 {
     while (1)
@@ -36,6 +38,7 @@ void *escuchar_interrupciones(void *arg)
         // Si llega CUALQUIER señal por este socket, es una interrupción
         pthread_mutex_lock(&mutex_interrupcion);
         hay_interrupcion = 1;
+        codigo_interrupcion = operacion;
         pthread_mutex_unlock(&mutex_interrupcion);
     }
     return NULL;

@@ -34,6 +34,7 @@ sem_t sem_cpu_disponible;
 sem_t sem_memoria_disponible;
 sem_t sem_cpus_desalojadas; // cuenta cuántas CPUs confirmaron el desalojo
 sem_t sem_fin_compactacion;
+// sem_t sem_bloqueo_planificacion;
 pthread_mutex_t mutex_ready;
 pthread_mutex_t mutex_new;
 pthread_mutex_t mutex_cpus;
@@ -100,6 +101,7 @@ void IniciarSemaforos()
     sem_init(&sem_memoria_disponible, 0, 0);
     sem_init(&sem_cpus_desalojadas, 0, 0);
     sem_init(&sem_fin_compactacion, 0, 0);
+    // sem_init(&sem_bloqueo_planificacion, 0, 1);
     pthread_mutex_init(&mutex_ready, NULL);
     pthread_mutex_init(&mutex_cpus, NULL);
     pthread_mutex_init(&mutex_ios, NULL);
@@ -351,6 +353,14 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
         {
             // la compactación llega por socket_km_eventos y la maneja EscucharKernelMemory.
             // este hilo espera a que termine antes de reintentar.
+
+            pthread_mutex_lock(&mutex_compactacion);
+            cpu->ocupado = false;
+            cpu->pid_actual = -1;
+            if (compactacion_en_curso)
+                sem_post(&sem_cpus_desalojadas);
+            pthread_mutex_unlock(&mutex_compactacion);
+
             sem_wait(&sem_fin_compactacion);
 
             // reintentar la creación del segmento, ahora ya hay espacio contiguo
@@ -783,24 +793,19 @@ void *AtenderCPU(void *args)
                     sem_post(&sem_memoria_disponible);
                     break;
                 }
-                else // INTERRUPCION
+                // else // INTERRUPCION
+                else if (strcmp(motivo, "COMPACTACION") == 0)
                 {
-                    pthread_mutex_lock(&mutex_compactacion);
-                    bool en_compactacion = compactacion_en_curso;
-                    pthread_mutex_unlock(&mutex_compactacion);
-
-                    if (en_compactacion)
-                    {
-                        EncolarReadyAlPrincipio(p);
-                        sem_post(&sem_cpus_desalojadas);
-                    }
-                    else
-                    {
-                        EncolarReady(p);
-                        sem_post(&sem_cpu_disponible);
-                    }
+                    EncolarReadyAlPrincipio(p);
+                    sem_post(&sem_cpus_desalojadas); // Destraba el IniciarCompactacion()
+                }
+                else // INTERRUPCION POR QUANTUM O DESALOJO COLA
+                {
+                    EncolarReady(p);
+                    sem_post(&sem_cpu_disponible);
                 }
 
+                free(motivo);
                 list_destroy_and_destroy_elements(valores, free);
             }
             break;
@@ -1140,6 +1145,9 @@ void *PlanificadorCortoPlazo(void *args)
         }
         pthread_mutex_unlock(&mutex_compactacion);
 
+        // sem_wait(&sem_bloqueo_planificacion);
+        // sem_post(&sem_bloqueo_planificacion);
+
         // Buscar una CPU libre
         pthread_mutex_lock(&mutex_cpus);
         t_cpu_conectada *cpu_libre = NULL;
@@ -1468,6 +1476,8 @@ void IniciarCompactacion()
 {
     log_info(logger, "## Inicio de compactación");
 
+    // sem_wait(&sem_bloqueo_planificacion);
+
     // bloquear el envío de nuevos procesos
     pthread_mutex_lock(&mutex_compactacion);
     compactacion_en_curso = true;
@@ -1538,6 +1548,8 @@ void FinalizarCompactacion()
     for (int i = 0; i < cpus_a_esperar; i++)
         sem_post(&sem_cpu_disponible);
     pthread_mutex_unlock(&mutex_cpus);
+
+    // sem_post(&sem_bloqueo_planificacion);
 
     // hay memoria disponible tras compactar
     sem_post(&sem_memoria_disponible);
@@ -1629,6 +1641,7 @@ void Cleanup()
     sem_destroy(&sem_memoria_disponible);
     sem_destroy(&sem_cpus_desalojadas);
     sem_destroy(&sem_fin_compactacion);
+    // sem_destroy(&sem_bloqueo_planificacion);
 
     // destruir mutexes
     pthread_mutex_destroy(&mutex_ready);

@@ -9,6 +9,9 @@ extern pthread_mutex_t mutex_interrupcion;
 
 extern int segment_max_size;
 
+extern int codigo_interrupcion;
+
+
 pthread_t hilo_interrupciones;
 
 int mmu_traducir(uint32_t dir_logica, uint32_t tamanio, uint32_t *dir_fisica)
@@ -667,7 +670,6 @@ int check_interrupt()
 {
     pthread_mutex_lock(&mutex_interrupcion);
     int resultado = hay_interrupcion;
-    hay_interrupcion = 0;
     pthread_mutex_unlock(&mutex_interrupcion);
     return resultado;
 }
@@ -743,8 +745,20 @@ void iniciar_ciclo(int pid)
             // 2. Devolvemos el PID al Scheduler con motivo INTERRUPCION
             t_paquete *paquete2 = CrearPaquete(CPU_PID_DEVUELTO);
             AgregarAPaquete(paquete2, &pid_actual, sizeof(int));
-            char *motivo = "INTERRUPCION";
-            AgregarAPaquete(paquete2, motivo, strlen(motivo) + 1);
+            //char *motivo = "INTERRUPCION";
+            pthread_mutex_lock(&mutex_interrupcion);
+            hay_interrupcion = 0;
+            int motivo_cod = codigo_interrupcion;
+            pthread_mutex_unlock(&mutex_interrupcion);
+
+            if (motivo_cod == INTERRUPCION_COMPACTACION) {
+                char *motivo = "COMPACTACION";
+                AgregarAPaquete(paquete2, motivo, strlen(motivo) + 1);
+            } else {
+                char *motivo = "QUANTUM";
+                AgregarAPaquete(paquete2, motivo, strlen(motivo) + 1);
+            }
+            
             EnviarPaquete(paquete2, socket_kernel_scheduler);
             EliminarPaquete(paquete2);
 

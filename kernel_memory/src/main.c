@@ -14,6 +14,7 @@ int socket_swap;
 int socket_misterioso;
 int instruction_delay;
 int socket_cpu_notif = -1;
+int compaction_delay;
 
 int segment_max_size;
 char *allocation_strategy;
@@ -150,6 +151,10 @@ void liberar_memoria_proceso(uint32_t pid)
             nuevo_hueco->base = seg->base;
             nuevo_hueco->tamanio = seg->tamanio;
             list_add(lista_huecos_libres, nuevo_hueco);
+            if (seg->bloques_swap != NULL)
+            {
+                list_destroy_and_destroy_elements(seg->bloques_swap, free);
+            }
             free(seg);
         }
         consolidar_huecos_libres();
@@ -184,6 +189,7 @@ void ObtenerConfig()
 
     segment_max_size = config_get_int_value(config, "SEGMENT_MAX_SIZE");
     allocation_strategy = string_duplicate(config_get_string_value(config, "ALLOCATION_STRATEGY"));
+    compaction_delay = config_get_int_value(config, "COMPACTION_DELAY");
 
     log_level = log_level_from_string(config_get_string_value(config, "LOG_LEVEL"));
     logger = log_create("kernel_memory.log", "KERNEL_MEMORY", true, log_level);
@@ -767,7 +773,6 @@ void atender_cliente(void *void_socket)
                 AgregarAPaquete(res, &ctx->CX, sizeof(uint8_t));
                 AgregarAPaquete(res, &ctx->DX, sizeof(uint8_t));
 
-
                 int cant_segmentos = 0;
                 char *key_seg = string_itoa(pid);
                 pthread_mutex_lock(&mutex_tabla_segmentos);
@@ -784,7 +789,6 @@ void atender_cliente(void *void_socket)
                     AgregarAPaquete(res, seg, sizeof(t_segmento));
                 }
 
-                
                 pthread_mutex_unlock(&mutex_tabla_segmentos);
                 free(key_seg);
 
@@ -808,7 +812,7 @@ void atender_cliente(void *void_socket)
             uint32_t id_segmento = *(uint32_t *)list_get(valores, 1);
 
             char *key = string_itoa(pid);
-            
+
             // 2. Buscamos la tabla de segmentos del proceso
             pthread_mutex_lock(&mutex_tabla_segmentos);
             t_list *tabla = dictionary_get(tabla_segmentos, key);
@@ -836,26 +840,27 @@ void atender_cliente(void *void_socket)
                 {
                     // 4. Devolvemos el espacio que ocupaba a la lista de huecos libres
                     pthread_mutex_lock(&mutex_huecos);
-                    
+
                     t_hueco_libre *nuevo_hueco = malloc(sizeof(t_hueco_libre));
                     nuevo_hueco->base = seg_a_eliminar->base;
                     nuevo_hueco->tamanio = seg_a_eliminar->tamanio;
                     list_add(lista_huecos_libres, nuevo_hueco);
-                    
+
                     // Consolida huecos vecinos para evitar fragmentación externa
-                    consolidar_huecos_libres(); 
+                    consolidar_huecos_libres();
                     pthread_mutex_unlock(&mutex_huecos);
 
                     // 5. Quitamos el segmento de la tabla del proceso y liberamos su memoria
                     list_remove(tabla, idx_seg);
-                    
+
                     // Si tenía bloques de swap asignados (en caso de haber sido suspendido antes)
-                    if (seg_a_eliminar->bloques_swap != NULL) {
+                    if (seg_a_eliminar->bloques_swap != NULL)
+                    {
                         list_destroy_and_destroy_elements(seg_a_eliminar->bloques_swap, free);
                     }
-                    
+
                     // Guardamos el tamaño para el log obligatorio antes de hacerle free
-                    uint32_t tam_log = seg_a_eliminar->tamanio; 
+                    uint32_t tam_log = seg_a_eliminar->tamanio;
                     free(seg_a_eliminar);
 
                     // LOG OBLIGATORIO: El enunciado exige este formato exacto para eliminación/creación
@@ -1074,6 +1079,7 @@ void atender_cliente(void *void_socket)
 
                 if (espacio_libre_total >= tamanio_pedido)
                 {
+                    EnviarOpCode(socket_cliente, NECESITA_COMPACTACION);
                     EnviarOpCode(socket_kernel_scheduler_eventos, SOLICITUD_COMPACTACION);
                     log_info(logger, "## PID: %d - Requiere comparctación para para segmento de %d bytes. Solicitud enviada al Scheduler.", pid, tamanio_pedido);
                 }
@@ -1114,12 +1120,15 @@ void atender_cliente(void *void_socket)
             list_destroy_and_destroy_elements(valores, free);
             break;
         }
-        case COMPACTAR_MEMORIA:
+        case CPUS_DESALOJADAS:
         {
-            usleep(config_get_int_value(config, "COMPACTION_DELAY") * 1000);
+            // las CPUs ya están desalojadas: aplicar el retardo y compactar
+            usleep(compaction_delay * 1000);
 
             compactar_memoria();
-            EnviarOpCode(socket_cliente, MENSAJE);
+
+            // avisar al Scheduler que terminó (por el mismo socket de eventos)
+            EnviarOpCode(socket_cliente, FIN_COMPACTACION);
             break;
         }
         case FINALIZAR_PROCESO:
