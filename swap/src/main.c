@@ -49,7 +49,7 @@ void IniciarArchivoSwap(){
 
     espacio_swap = mmap(NULL, swap_file_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd_swap, 0);
     if(espacio_swap == MAP_FAILED){
-        log_error(logger, "Eror al mapear el archivo de SWAP con mmap");
+        log_error(logger, "Error al mapear el archivo de SWAP con mmap");
         close(fd_swap);
         exit(EXIT_FAILURE);
     }

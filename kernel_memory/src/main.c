@@ -644,14 +644,14 @@ void atender_cliente(void *void_socket)
         pthread_mutex_unlock(&mutex_huecos);
 
         log_info(logger, "## Memory Stick de %d bytes mapeado en base %d", tamanio_stick, base_nueva);
-        if (socket_cpu != -1)
+        if (socket_cpu_notif != -1)
         {
             t_paquete *paq_cpu = CrearPaquete(NUEVO_MEMORY_STICK);
             AgregarAPaquete(paq_cpu, &tamanio_stick, sizeof(uint32_t));
             AgregarAPaquete(paq_cpu, &base_nueva, sizeof(uint32_t));
             AgregarAPaquete(paq_cpu, &puerto_stick, sizeof(int));
             AgregarAPaquete(paq_cpu, ip_stick, strlen(ip_stick) + 1);
-            EnviarPaquete(paq_cpu, socket_cpu);
+            EnviarPaquete(paq_cpu, socket_cpu_notif);
             EliminarPaquete(paq_cpu);
             log_info(logger, "## Notificación de nuevo hardware enviada a la CPU");
         }
@@ -767,17 +767,6 @@ void atender_cliente(void *void_socket)
                 AgregarAPaquete(res, &ctx->CX, sizeof(uint8_t));
                 AgregarAPaquete(res, &ctx->DX, sizeof(uint8_t));
 
-                /*int cant_segmentos = 0;
-                if (ctx->tabla_segmentos != NULL) {
-                    cant_segmentos = list_size(ctx->tabla_segmentos);
-                }
-                AgregarAPaquete(res, &cant_segmentos, sizeof(int));
-
-                for (int i = 0; i < cant_segmentos; i++) {
-                    t_segmento* seg = list_get(ctx->tabla_segmentos, i);
-                    AgregarAPaquete(res, seg, sizeof(t_segmento));
-                }
-                EnviarPaquete(res, socket_cliente);*/
 
                 int cant_segmentos = 0;
                 char *key_seg = string_itoa(pid);
@@ -794,9 +783,12 @@ void atender_cliente(void *void_socket)
                     t_segmento *seg = list_get(tabla, i);
                     AgregarAPaquete(res, seg, sizeof(t_segmento));
                 }
+
+                
                 pthread_mutex_unlock(&mutex_tabla_segmentos);
                 free(key_seg);
 
+                EnviarPaquete(res, socket_cliente);
                 EliminarPaquete(res);
                 log_info(logger, "## Contexto enviado a CPU para PID: %d (PC: %d)", pid, ctx->PC);
             }
@@ -805,6 +797,84 @@ void atender_cliente(void *void_socket)
                 log_error(logger, "Error: CPU solicitó contexto para un PID inexistente: %d", pid);
             }
 
+            list_destroy_and_destroy_elements(valores, free);
+            break;
+        }
+        case ELIMINAR_SEGMENTO:
+        {
+            // 1. Deserializamos el paquete enviado por el Scheduler
+            t_list *valores = RecibirPaquete(socket_cliente);
+            uint32_t pid = *(uint32_t *)list_get(valores, 0);
+            uint32_t id_segmento = *(uint32_t *)list_get(valores, 1);
+
+            char *key = string_itoa(pid);
+            
+            // 2. Buscamos la tabla de segmentos del proceso
+            pthread_mutex_lock(&mutex_tabla_segmentos);
+            t_list *tabla = dictionary_get(tabla_segmentos, key);
+            pthread_mutex_unlock(&mutex_tabla_segmentos);
+            free(key);
+
+            if (tabla != NULL)
+            {
+                // 3. Buscamos el segmento específico dentro de su tabla
+                t_segmento *seg_a_eliminar = NULL;
+                int idx_seg = -1;
+
+                for (int i = 0; i < list_size(tabla); i++)
+                {
+                    t_segmento *seg = list_get(tabla, i);
+                    if (seg->id_segmento == id_segmento)
+                    {
+                        seg_a_eliminar = seg;
+                        idx_seg = i;
+                        break;
+                    }
+                }
+
+                if (seg_a_eliminar != NULL)
+                {
+                    // 4. Devolvemos el espacio que ocupaba a la lista de huecos libres
+                    pthread_mutex_lock(&mutex_huecos);
+                    
+                    t_hueco_libre *nuevo_hueco = malloc(sizeof(t_hueco_libre));
+                    nuevo_hueco->base = seg_a_eliminar->base;
+                    nuevo_hueco->tamanio = seg_a_eliminar->tamanio;
+                    list_add(lista_huecos_libres, nuevo_hueco);
+                    
+                    // Consolida huecos vecinos para evitar fragmentación externa
+                    consolidar_huecos_libres(); 
+                    pthread_mutex_unlock(&mutex_huecos);
+
+                    // 5. Quitamos el segmento de la tabla del proceso y liberamos su memoria
+                    list_remove(tabla, idx_seg);
+                    
+                    // Si tenía bloques de swap asignados (en caso de haber sido suspendido antes)
+                    if (seg_a_eliminar->bloques_swap != NULL) {
+                        list_destroy_and_destroy_elements(seg_a_eliminar->bloques_swap, free);
+                    }
+                    
+                    // Guardamos el tamaño para el log obligatorio antes de hacerle free
+                    uint32_t tam_log = seg_a_eliminar->tamanio; 
+                    free(seg_a_eliminar);
+
+                    // LOG OBLIGATORIO: El enunciado exige este formato exacto para eliminación/creación
+                    log_info(logger, "## PID: %d Segmento Eliminado %d Tamaño: %d", pid, id_segmento, tam_log);
+                }
+                else
+                {
+                    log_warning(logger, "## PID: %d - Intento de eliminar segmento %d inexistente", pid, id_segmento);
+                }
+            }
+            else
+            {
+                log_error(logger, "## Error: No se encontró la tabla de segmentos para el PID %d", pid);
+            }
+
+            // 6. Respondemos confirmación (MENSAJE) al Scheduler para destrabar su mutex
+            EnviarOpCode(socket_cliente, MENSAJE);
+
+            // 7. Limpieza del paquete recibido para evitar memory leaks
             list_destroy_and_destroy_elements(valores, free);
             break;
         }
@@ -1018,6 +1088,7 @@ void atender_cliente(void *void_socket)
             list_destroy_and_destroy_elements(valores, free);
             break;
         }
+
         case SUSPENDER_PROCESO:
         {
             t_list *valores = RecibirPaquete(socket_cliente);

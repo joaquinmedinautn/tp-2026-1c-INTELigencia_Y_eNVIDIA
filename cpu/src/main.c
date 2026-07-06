@@ -124,6 +124,9 @@ int main(int argc, char *argv[])
     socket_kernel_memory = CrearConexion(ip_kernel_memory, puerto_kernel_memory);
     EnviarOpCode(socket_kernel_memory, CPU_A_KERNEL_MEMORY);
 
+    socket_kernel_memory_notif = CrearConexion(ip_kernel_memory, puerto_kernel_memory);
+    EnviarOpCode(socket_kernel_memory_notif, CPU_A_KERNEL_MEMORY_NOTIFICACIONES);
+
     int op_km = RecibirOperacion(socket_kernel_memory);
     if (op_km == NUEVO_MEMORY_STICK)
     {
@@ -147,8 +150,7 @@ int main(int argc, char *argv[])
         list_destroy_and_destroy_elements(valores_sticks, free);
     }
 
-    socket_kernel_memory_notif = CrearConexion(ip_kernel_memory, puerto_kernel_memory);
-    EnviarOpCode(socket_kernel_memory_notif, CPU_A_KERNEL_MEMORY_NOTIFICACIONES);
+    
 
     pthread_t hilo_sticks;
     pthread_create(&hilo_sticks, NULL, escuchar_nuevos_sticks, NULL);

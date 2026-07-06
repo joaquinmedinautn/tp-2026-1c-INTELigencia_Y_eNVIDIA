@@ -46,13 +46,13 @@ void atender_peticiones(void* arg){
         case LEER:{
             usleep(memory_delay * 1000);
                 t_list* valores = RecibirPaquete(socket_cliente);
-                uint32_t dir_fisica = *(uint32_t*)list_get(valores, 0);
+                uint32_t offset_local = *(uint32_t*)list_get(valores, 0);
                 uint32_t tamanio = *(uint32_t*)list_get(valores, 1);
 
                 log_info(logger, "## Lectura de %d bytes", tamanio);
                 
                 void* buffer_leido =  malloc(tamanio);
-                memcpy(buffer_leido, (char*)espacio_almacenamiento + dir_fisica, tamanio);
+                memcpy(buffer_leido, (char*)espacio_almacenamiento + offset_local, tamanio);
 
                 t_paquete* res = CrearPaquete(LEER);
                 AgregarAPaquete(res, buffer_leido, tamanio);
@@ -67,13 +67,13 @@ void atender_peticiones(void* arg){
         case ESCRIBIR: { 
             usleep(memory_delay * 1000);
                 t_list* valores = RecibirPaquete(socket_cliente);
-                uint32_t dir_fisica = *(uint32_t*)list_get(valores, 0);
+                uint32_t offset_local = *(uint32_t*)list_get(valores, 0);
                 uint32_t tamanio = *(uint32_t*)list_get(valores, 1);
                 void* datos = list_get(valores, 2);
 
                 log_info(logger, "## Escritura de %d bytes", tamanio); 
                 
-                memcpy((char*)espacio_almacenamiento + dir_fisica, datos, tamanio);
+                memcpy((char*)espacio_almacenamiento + offset_local, datos, tamanio);
                 
                 EnviarOpCode(socket_cliente, MENSAJE); 
                 
@@ -126,6 +126,20 @@ int main(int argc, char* argv[]) {
         EliminarPaquete(paq_registro);
 
         log_info(logger, "## Memory Stick de %d bytes conectado al Kernel Memory",tam_memoria);
+
+        pthread_t hilo_km;
+        int *p_socket_km = malloc(sizeof(int));
+        *p_socket_km = socket_kernel_memory;
+
+        if (pthread_create(&hilo_km, NULL, (void*)atender_peticiones, p_socket_km) != 0) {
+            log_error(logger, "Error al crear el hilo de atención para Kernel Memory");
+            free(p_socket_km);
+            free(espacio_almacenamiento); 
+            return EXIT_FAILURE; 
+        } else {
+            pthread_detach(hilo_km);
+        }
+
     }else{
         log_error(logger, "No se pudo conectar al Kernel Memory. Cerrando" );
         free(espacio_almacenamiento);
