@@ -263,13 +263,13 @@ void suspender_proceso(uint32_t pid)
                 if (stick != NULL)
                 {
                     uint32_t offset_local = dir_fisica_leer - stick->base_global;
-                    t_paquete *paq_leer = CrearPaquete(LECTURA_BLOQUE);
+                    t_paquete *paq_leer = CrearPaquete(LEER);
                     AgregarAPaquete(paq_leer, &offset_local, sizeof(uint32_t));
                     AgregarAPaquete(paq_leer, &bytes_a_enviar, sizeof(uint32_t));
                     EnviarPaquete(paq_leer, stick->socket);
                     EliminarPaquete(paq_leer);
 
-                    if (RecibirOperacion(stick->socket) == LECTURA_BLOQUE)
+                    if (RecibirOperacion(stick->socket) == LEER)
                     {
                         t_list *resp = RecibirPaquete(stick->socket);
                         memcpy(buffer_bloque, list_get(resp, 0), bytes_a_enviar);
@@ -992,7 +992,7 @@ void atender_cliente(void *void_socket)
         case CONSULTAR_ESPACIO:
         {
 
-            t_list *valores = RecibirPaquete(socket_cliente);
+            /*t_list *valores = RecibirPaquete(socket_cliente);
 
             int espacio_libre_total = 0;
 
@@ -1008,6 +1008,35 @@ void atender_cliente(void *void_socket)
             AgregarAPaquete(res, &espacio_libre_total, sizeof(uint32_t));
             EnviarPaquete(res, socket_cliente);
             EliminarPaquete(res);
+
+            list_destroy_and_destroy_elements(valores, free);
+            break;*/
+            t_list *valores = RecibirPaquete(socket_cliente);
+            uint32_t pid = *(uint32_t *)list_get(valores, 0);
+
+            // verificar si los segmentos no-presentes del PID entran en los huecos actuales
+            bool entra = true;
+            char *key = string_itoa(pid);
+            pthread_mutex_lock(&mutex_tabla_segmentos);
+            t_list *tabla = dictionary_get(tabla_segmentos, key);
+            if (tabla != NULL)
+            {
+                pthread_mutex_lock(&mutex_huecos);
+                for (int i = 0; i < list_size(tabla); i++)
+                {
+                    t_segmento *seg = list_get(tabla, i);
+                    if (!seg->presente && buscar_hueco_libre(seg->tamanio) == NULL)
+                    {
+                        entra = false;
+                        break;
+                    }
+                }
+                pthread_mutex_unlock(&mutex_huecos);
+            }
+            pthread_mutex_unlock(&mutex_tabla_segmentos);
+            free(key);
+
+            EnviarOpCode(socket_cliente, entra ? PROCESO_CARGADO : ESPACIO_INSUFICIENTE);
 
             list_destroy_and_destroy_elements(valores, free);
             break;

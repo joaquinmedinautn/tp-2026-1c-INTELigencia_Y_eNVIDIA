@@ -841,10 +841,6 @@ void *AtenderIO(void *args)
 
         case IO_FINALIZADO:
         {
-            // int pid;
-            // recv(io->socket, &pid, sizeof(int), MSG_WAITALL);
-            // proceso *p = BuscarProceso(pid);
-
             // 1. Recibimos el paquete completo (esto consume correctamente los metadatos)
             t_list *valores = RecibirPaquete(io->socket);
 
@@ -890,6 +886,7 @@ void *AtenderIO(void *args)
                 queue_push(cola_susp_ready, p);
                 pthread_mutex_unlock(&mutex_susp);
                 log_info(logger, "## (%d) finalizó IO y pasa a SUSP. READY", p->pid);
+                sem_post(&sem_memoria_disponible);
             }
             else
             {
@@ -1045,11 +1042,6 @@ void *PlanificadorMedianoPlazo(void *args)
         // trabajar sobre una lista temporal para no modificar la cola mientras iteramos
         t_list *suspendidos = list_create();
 
-        // Copiamos los elementos de las colas sin destruirlas (Copia superficial)
-        // Accedemos a la lista interna de la cola usando ->elements
-        // list_add_all(suspendidos, cola_susp_block->elements);
-        // list_add_all(suspendidos, cola_susp_ready->elements);
-
         // agregar los de SUSP_BLOCK
         t_queue *temp_block = cola_susp_block;
         while (!queue_is_empty(temp_block))
@@ -1091,13 +1083,27 @@ void *PlanificadorMedianoPlazo(void *args)
                 {
                     // todavía esperando IO → SUSP_READY
                     CambiarEstado(p, SUSP_READY);
+                    
                     pthread_mutex_lock(&mutex_susp);
                     queue_push(cola_susp_ready, p);
                     pthread_mutex_unlock(&mutex_susp);
+                    //sem_post(&sem_memoria_disponible);
                 }
                 else if (p->estado == SUSP_READY)
                 {
+                    // pedir al Memory que traiga los segmentos del SWAP ANTES de replanificar
+                    pthread_mutex_lock(&mutex_kernel_memory);
+                    t_paquete *paq = CrearPaquete(DESUSPENDER_PROCESO);
+                    AgregarAPaquete(paq, &(p->pid), sizeof(int));
+                    EnviarPaquete(paq, socket_kernel_memory);
+                    EliminarPaquete(paq);
+
+                    //Sincronizamos el caño consumiendo el MENSAJE de confirmación.
+                    //Esto asegura que KM terminó de restaurar los segmentos en RAM antes de que la CPU intente leerlos.
+                    RecibirOperacion(socket_kernel_memory);
+                    pthread_mutex_unlock(&mutex_kernel_memory);
                     // IO ya terminó → READY
+                    //Ahora que la RAM física está lista, el proceso vuelve a competir en el corto plazo
                     EncolarReady(p);
                 }
             }
