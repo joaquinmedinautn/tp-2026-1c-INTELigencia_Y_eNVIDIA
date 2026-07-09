@@ -50,11 +50,12 @@ int main(int argc, char *argv[])
     log_info(logger, "## Conectado a Kernel Scheduler como %s", tipo);
 
     // bucle principal: espero ordenes de scheduler indefinidamente
+    printf("DEBUG: entrando al bucle principal\n");
     while (1)
     {
         // espera el proximo op code
         int cod_op = RecibirOperacion(socket_kernel_scheduler);
-        printf("Codigo de op: %d\n",cod_op); // debug
+        printf("Codigo de op: %d\n", cod_op); // debug
         fflush(stdout);
 
         if (cod_op == -1)
@@ -62,7 +63,7 @@ int main(int argc, char *argv[])
             log_error(logger, "Desconectado del Scheduler");
             break;
         }
-
+        printf("DEBUG: entrando al switch");
         switch (cod_op)
         {
         case IO_SLEEP:
@@ -91,10 +92,20 @@ int main(int argc, char *argv[])
         }
 
         case IO_STDOUT_WRITE:
-        {
+        {   
+            printf("DEBUG: Entrando por IO_STDOUT_WRITE\n");
+
             t_list *valores = RecibirPaquete(socket_kernel_scheduler);
+            printf("DEBUG: Obtenidos los valores\n");
             int pid = *(int *)list_get(valores, 0);
-            char *texto = (char *)list_get(valores, 1); // el scheduler ya nos manda los bytes leídos de memoria
+            printf("DEBUG: Obtenido el pid: %d\n", pid);
+            int tam = *(int *)list_get(valores, 1);
+            printf("DEBUG: Obtenido  el tamanio: %d\n", tam);
+            char *texto = calloc(1, tam + 1);
+            printf("DEBUG: Obtenido texto");
+            memcpy(texto, list_get(valores, 2), tam); // copia terminada en \0
+            log_info(logger, "## PID: %d - %s", pid, texto);
+            free(texto);
 
             log_info(logger, "## PID: %d - Inicio de IO", pid);
             log_info(logger, "## PID: %d - %s", pid, texto);
@@ -118,17 +129,21 @@ int main(int argc, char *argv[])
 
             log_info(logger, "## PID: %d - Inicio de IO", pid);
             printf("## PID: %d - Ingrese %d caracteres: ", pid, tam_a_leer);
+            fflush(stdout);
 
             // reservo memoria para el ingreso de datos
             char *buffer = calloc(1, tam_a_leer + 1);
+            bool entrada_completa = false;
             if (fgets(buffer, tam_a_leer + 1, stdin) != NULL)
             {
-                buffer[strcspn(buffer, "\n")] = '\0'; // limpiar el enter
+                entrada_completa = (strchr(buffer, '\n') != NULL); // ¿el \n entró en el buffer?
+                buffer[strcspn(buffer, "\n")] = '\0';              // ahora sí, limpiarlo
             }
-            if (strchr(buffer, '\n') == NULL) {
-                    int c;
-                    while ((c = getchar()) != '\n' && c != EOF);
-                }
+            if (!entrada_completa) // solo drenar si el usuario tipeó de más
+            {
+                int c;
+                while ((c = getchar()) != '\n' && c != EOF);
+            }
 
             log_info(logger, "## PID: %d - Fin de IO", pid);
             // enviamos el PID y los caracteres leídos.

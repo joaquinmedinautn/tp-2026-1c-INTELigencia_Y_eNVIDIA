@@ -11,7 +11,6 @@ extern int segment_max_size;
 
 extern int codigo_interrupcion;
 
-
 pthread_t hilo_interrupciones;
 
 int mmu_traducir(uint32_t dir_logica, uint32_t tamanio, uint32_t *dir_fisica)
@@ -19,10 +18,11 @@ int mmu_traducir(uint32_t dir_logica, uint32_t tamanio, uint32_t *dir_fisica)
     uint32_t num_segmento = dir_logica / segment_max_size;
     uint32_t desplazamiento = dir_logica % segment_max_size;
 
-    if (contexto.tabla_segmentos == NULL) {
+    if (contexto.tabla_segmentos == NULL)
+    {
         return -1; // SEG_FAULT: No hay tabla de segmentos inicializada
     }
-    
+
     t_segmento *segmento_encontrado = NULL;
     for (int i = 0; i < list_size(contexto.tabla_segmentos); i++)
     {
@@ -267,7 +267,7 @@ int execute(t_instruccion *inst)
 
         // 1. Avisamos que viene una Syscall
         EnviarOpCode(socket_kernel_scheduler, CPU_SYSCALL);
-        
+
         // 2. Enviamos el PID (4 bytes)
         send(socket_kernel_scheduler, &pid_actual, sizeof(int), 0);
 
@@ -435,20 +435,16 @@ int execute(t_instruccion *inst)
             return 2;
         }
 
-        // 2. Enviar Syscall al Scheduler CORRECTAMENTE EMPAQUETADA
-        t_paquete *paq_sys = CrearPaquete(CPU_SYSCALL);
-        
-        AgregarAPaquete(paq_sys, &pid_actual, sizeof(int));
-        
-        // Empaquetamos el nombre de la instrucción (string limpio)
-        AgregarAPaquete(paq_sys, inst->nombre, strlen(inst->nombre) + 1);
-        
-        // Empaquetamos las direcciones
-        AgregarAPaquete(paq_sys, &dir_fisica, sizeof(uint32_t));
-        AgregarAPaquete(paq_sys, &tamanio, sizeof(uint32_t));
-        
-        EnviarPaquete(paq_sys, socket_kernel_scheduler);
-        EliminarPaquete(paq_sys);
+        EnviarOpCode(socket_kernel_scheduler, CPU_SYSCALL);
+        send(socket_kernel_scheduler, &pid_actual, sizeof(int), 0);
+
+        char nombre_syscall[50];
+        memset(nombre_syscall, 0, 50);
+        strcpy(nombre_syscall, inst->nombre); // "STDIN" o "STDOUT"
+        send(socket_kernel_scheduler, nombre_syscall, 50, 0);
+
+        send(socket_kernel_scheduler, &dir_fisica, sizeof(uint32_t), 0);
+        send(socket_kernel_scheduler, &tamanio, sizeof(uint32_t), 0);
 
         contexto.PC++;
         actualizar_contexto();
@@ -674,7 +670,6 @@ int check_interrupt()
     return resultado;
 }
 
-
 void iniciar_ciclo(int pid)
 {
     pid_actual = pid;
@@ -692,29 +687,31 @@ void iniciar_ciclo(int pid)
     RecibirOperacion(socket_kernel_memory);
     t_list *valores_ctx = RecibirPaquete(socket_kernel_memory);
 
-    contexto.PC  = *(uint32_t*)list_get(valores_ctx, 0);
-    contexto.EAX = *(uint32_t*)list_get(valores_ctx, 1);
-    contexto.EBX = *(uint32_t*)list_get(valores_ctx, 2);
-    contexto.ECX = *(uint32_t*)list_get(valores_ctx, 3);
-    contexto.EDX = *(uint32_t*)list_get(valores_ctx, 4);
-    contexto.SI  = *(uint32_t*)list_get(valores_ctx, 5);
-    contexto.DI  = *(uint32_t*)list_get(valores_ctx, 6);
-    contexto.AX  = *(uint8_t*)list_get(valores_ctx, 7);
-    contexto.BX  = *(uint8_t*)list_get(valores_ctx, 8);
-    contexto.CX  = *(uint8_t*)list_get(valores_ctx, 9);
-    contexto.DX  = *(uint8_t*)list_get(valores_ctx, 10);
+    contexto.PC = *(uint32_t *)list_get(valores_ctx, 0);
+    contexto.EAX = *(uint32_t *)list_get(valores_ctx, 1);
+    contexto.EBX = *(uint32_t *)list_get(valores_ctx, 2);
+    contexto.ECX = *(uint32_t *)list_get(valores_ctx, 3);
+    contexto.EDX = *(uint32_t *)list_get(valores_ctx, 4);
+    contexto.SI = *(uint32_t *)list_get(valores_ctx, 5);
+    contexto.DI = *(uint32_t *)list_get(valores_ctx, 6);
+    contexto.AX = *(uint8_t *)list_get(valores_ctx, 7);
+    contexto.BX = *(uint8_t *)list_get(valores_ctx, 8);
+    contexto.CX = *(uint8_t *)list_get(valores_ctx, 9);
+    contexto.DX = *(uint8_t *)list_get(valores_ctx, 10);
 
-     // Reconstruimos la tabla de segmentos del proceso
-    if (contexto.tabla_segmentos != NULL) {
+    // Reconstruimos la tabla de segmentos del proceso
+    if (contexto.tabla_segmentos != NULL)
+    {
         list_destroy_and_destroy_elements(contexto.tabla_segmentos, free);
     }
     contexto.tabla_segmentos = list_create();
 
-    int cant_segmentos = *(int*)list_get(valores_ctx, 11);
+    int cant_segmentos = *(int *)list_get(valores_ctx, 11);
     log_info(logger, "DEBUG: cant_segmentos recibido = %d", cant_segmentos);
-    for (int i = 0; i < cant_segmentos; i++) {
-        t_segmento* seg_recibido = (t_segmento*)list_get(valores_ctx, 12 + i);
-        t_segmento* nuevo_seg = malloc(sizeof(t_segmento));
+    for (int i = 0; i < cant_segmentos; i++)
+    {
+        t_segmento *seg_recibido = (t_segmento *)list_get(valores_ctx, 12 + i);
+        t_segmento *nuevo_seg = malloc(sizeof(t_segmento));
         memcpy(nuevo_seg, seg_recibido, sizeof(t_segmento));
         list_add(contexto.tabla_segmentos, nuevo_seg);
     }
@@ -745,25 +742,27 @@ void iniciar_ciclo(int pid)
             // 2. Devolvemos el PID al Scheduler con motivo INTERRUPCION
             t_paquete *paquete2 = CrearPaquete(CPU_PID_DEVUELTO);
             AgregarAPaquete(paquete2, &pid_actual, sizeof(int));
-            //char *motivo = "INTERRUPCION";
+            // char *motivo = "INTERRUPCION";
             pthread_mutex_lock(&mutex_interrupcion);
             hay_interrupcion = 0;
             int motivo_cod = codigo_interrupcion;
             pthread_mutex_unlock(&mutex_interrupcion);
 
-            if (motivo_cod == INTERRUPCION_COMPACTACION) {
+            if (motivo_cod == INTERRUPCION_COMPACTACION)
+            {
                 char *motivo = "COMPACTACION";
                 AgregarAPaquete(paquete2, motivo, strlen(motivo) + 1);
-            } else {
+            }
+            else
+            {
                 char *motivo = "QUANTUM";
                 AgregarAPaquete(paquete2, motivo, strlen(motivo) + 1);
             }
-            
+
             EnviarPaquete(paquete2, socket_kernel_scheduler);
             EliminarPaquete(paquete2);
 
             break;
         }
     }
-
 }

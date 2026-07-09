@@ -151,6 +151,7 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
     }
     else if (strcmp(syscall_nombre, "STDIN") == 0)
     {
+        printf("DEBUG: Entro por else if (strcmp(syscall_nombre, <STDIN>) == 0)\n");
         CambiarEstado(p, BLOCK);
         // lanzar timer de suspensión
         t_args_suspension *args_susp = malloc(sizeof(t_args_suspension));
@@ -546,25 +547,28 @@ void EnviarAIO(char *tipo_buscado, int operacion, int pid, void *params)
     else if (operacion == IO_STDOUT_WRITE && params != NULL)
     {
         int *p = (int *)params;
-        int direccion_logica = p[0];
+        int direccion_fisica = p[0];
         int tamanio = p[1];
 
         // antes de mandar al IO hay que pedir los bytes a Kernel Memory
         pthread_mutex_lock(&mutex_kernel_memory);
         t_paquete *paq_km = CrearPaquete(LEER);
         AgregarAPaquete(paq_km, &pid, sizeof(int));
-        AgregarAPaquete(paq_km, &direccion_logica, sizeof(int));
+        AgregarAPaquete(paq_km, &direccion_fisica, sizeof(int));
         AgregarAPaquete(paq_km, &tamanio, sizeof(int));
         EnviarPaquete(paq_km, socket_kernel_memory);
         EliminarPaquete(paq_km);
 
-        int size;
-        void *bytes = RecibirBuffer(&size, socket_kernel_memory);
+        // el KM responde con EnviarPaquete: leer op code + paquete
+        RecibirOperacion(socket_kernel_memory);              // consume el op (LEER)
+        t_list *resp = RecibirPaquete(socket_kernel_memory); // los bytes en el índice 0
         pthread_mutex_unlock(&mutex_kernel_memory);
 
-        // agregar los bytes al paquete para el IO
-        AgregarAPaquete(paquete, bytes, size);
-        free(bytes);
+        // armar el paquete para el IO: [pid][tamaño][bytes]
+        AgregarAPaquete(paquete, &tamanio, sizeof(int));
+        AgregarAPaquete(paquete, list_get(resp, 0), tamanio);
+
+        list_destroy_and_destroy_elements(resp, free);
     }
 
     EnviarPaquete(paquete, io_destino->socket);
@@ -631,7 +635,7 @@ void *ManejarCliente(void *arg)
             t_cpu_conectada *cpu = list_get(lista_cpus, i);
             if (cpu->id_cpu == id_cpu)
             {
-                cpu->socket_interrupt = socket_cliente; // Deberás agregar este int en el struct t_cpu_conectada
+                cpu->socket_interrupt = socket_cliente;
                 break;
             }
         }
@@ -713,6 +717,7 @@ void *AtenderCPU(void *args)
     {
         // Esperar a que el scheduler le asigne un proceso o reciba interrupción
         int op_code = RecibirOperacion(cpu->socket);
+        printf("DEBUG AtenderCPU: op_code recibido = %d (CPU %d)\n", op_code, cpu->id_cpu);
 
         if (op_code == -1)
         {
@@ -1083,11 +1088,11 @@ void *PlanificadorMedianoPlazo(void *args)
                 {
                     // todavía esperando IO → SUSP_READY
                     CambiarEstado(p, SUSP_READY);
-                    
+
                     pthread_mutex_lock(&mutex_susp);
                     queue_push(cola_susp_ready, p);
                     pthread_mutex_unlock(&mutex_susp);
-                    //sem_post(&sem_memoria_disponible);
+                    // sem_post(&sem_memoria_disponible);
                 }
                 else if (p->estado == SUSP_READY)
                 {
@@ -1098,12 +1103,12 @@ void *PlanificadorMedianoPlazo(void *args)
                     EnviarPaquete(paq, socket_kernel_memory);
                     EliminarPaquete(paq);
 
-                    //Sincronizamos el caño consumiendo el MENSAJE de confirmación.
-                    //Esto asegura que KM terminó de restaurar los segmentos en RAM antes de que la CPU intente leerlos.
+                    // Sincronizamos el caño consumiendo el MENSAJE de confirmación.
+                    // Esto asegura que KM terminó de restaurar los segmentos en RAM antes de que la CPU intente leerlos.
                     RecibirOperacion(socket_kernel_memory);
                     pthread_mutex_unlock(&mutex_kernel_memory);
                     // IO ya terminó → READY
-                    //Ahora que la RAM física está lista, el proceso vuelve a competir en el corto plazo
+                    // Ahora que la RAM física está lista, el proceso vuelve a competir en el corto plazo
                     EncolarReady(p);
                 }
             }
@@ -1326,7 +1331,7 @@ void *HiloQuantum(void *args)
 
     // mandar interrupción a la CPU
     log_info(logger, "## (%d) - Desalojado por fin de quantum", pid);
-    EnviarOpCode(cpu->socket, INTERRUPCION_QUANTUM); // op code de interrupción por quantum
+    EnviarOpCode(cpu->socket_interrupt, INTERRUPCION_QUANTUM); // op code de interrupción por quantum
 
     return NULL;
 }
@@ -1444,7 +1449,7 @@ void IntentarDesalojoPorPrioridad(proceso *nuevo)
                          "## (%d) Prioridad: %d - Desalojado por cola más prioritaria por el proceso %d con prioridad %d",
                          ejecutando->pid, ejecutando->prioridad, nuevo->pid, nuevo->prioridad);
 
-                EnviarOpCode(cpu->socket, INTERRUPCION_DESALOJO_COLA);
+                EnviarOpCode(cpu->socket_interrupt, INTERRUPCION_DESALOJO_COLA);
                 break; // solo se desaloja 1 CPU por evento
             }
         }
@@ -1498,7 +1503,7 @@ void IniciarCompactacion()
         if (cpu->ocupado)
         {
             cpus_a_esperar++;
-            EnviarOpCode(cpu->socket, INTERRUPCION_COMPACTACION);
+            EnviarOpCode(cpu->socket_interrupt, INTERRUPCION_COMPACTACION);
         }
     }
     pthread_mutex_unlock(&mutex_cpus);
