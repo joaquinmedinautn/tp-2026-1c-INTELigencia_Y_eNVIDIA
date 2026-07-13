@@ -228,6 +228,8 @@ int execute(t_instruccion *inst)
     {
         uint32_t valor = atoi(inst->params[1]);
         asignar_valor_registro(inst->params[0], valor);
+        if (strcmp(inst->params[0], "PC") == 0)
+        return 1;   
     }
     else if (strcmp(inst->nombre, "SUM") == 0)
     {
@@ -443,7 +445,7 @@ int execute(t_instruccion *inst)
         strcpy(nombre_syscall, inst->nombre); // "STDIN" o "STDOUT"
         send(socket_kernel_scheduler, nombre_syscall, 50, 0);
 
-        send(socket_kernel_scheduler, &dir_fisica, sizeof(uint32_t), 0);
+        send(socket_kernel_scheduler, &dir_logica, sizeof(uint32_t), 0);
         send(socket_kernel_scheduler, &tamanio, sizeof(uint32_t), 0);
 
         contexto.PC++;
@@ -474,7 +476,7 @@ int execute(t_instruccion *inst)
         // 2. Si la MMU da el OK, solicitamos lectura al Kernel Memory usando la Dir Física
         t_paquete *paquete = CrearPaquete(LEER);
         AgregarAPaquete(paquete, &pid_actual, sizeof(uint32_t));
-        AgregarAPaquete(paquete, &dir_fisica, sizeof(uint32_t)); // ¡Dirección Física!
+        AgregarAPaquete(paquete, &dir_logica, sizeof(uint32_t));
         AgregarAPaquete(paquete, &tamanio, sizeof(uint32_t));
         EnviarPaquete(paquete, socket_kernel_memory);
         EliminarPaquete(paquete);
@@ -546,7 +548,7 @@ int execute(t_instruccion *inst)
         // 3. ESCRIBIR en Kernel Memory usando la Dirección Física
         t_paquete *paquete = CrearPaquete(ESCRIBIR);
         AgregarAPaquete(paquete, &pid_actual, sizeof(uint32_t));
-        AgregarAPaquete(paquete, &dir_fisica, sizeof(uint32_t));
+        AgregarAPaquete(paquete, &dir_logica, sizeof(uint32_t));
         AgregarAPaquete(paquete, &tamanio, sizeof(uint32_t));
         AgregarAPaquete(paquete, dato, tamanio);
         EnviarPaquete(paquete, socket_kernel_memory);

@@ -373,7 +373,12 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
             EnviarPaquete(reintento, socket_kernel_memory);
             EliminarPaquete(reintento);
 
-            RecibirOperacion(socket_kernel_memory);
+            int confirmacion_reintento = RecibirOperacion(socket_kernel_memory);
+            if (confirmacion_reintento == MENSAJE)
+            {
+                // Si el KM mandó metadatos extras o payload en el paquete de éxito,
+                log_info(logger, "DEBUG: Reintento de CREAR_SEGMENTO exitoso para PID %d", pid);
+            }
             pthread_mutex_unlock(&mutex_kernel_memory);
         }
         else if (respuesta == ESPACIO_INSUFICIENTE)
@@ -386,6 +391,7 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
             AgregarAPaquete(fin, &pid, sizeof(int));
             EnviarPaquete(fin, socket_kernel_memory);
             EliminarPaquete(fin);
+            RecibirOperacion(socket_kernel_memory);
             pthread_mutex_unlock(&mutex_kernel_memory);
 
             CambiarEstado(p, EXIT);
@@ -488,6 +494,8 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
         nuevo->dir_fisica_io = 0;
         nuevo->tamanio_io = 0;
         nuevo->tiempo_suspension = 0;
+        nuevo->bytes_pendientes = NULL;
+        nuevo->tam_pendiente = 0;
 
         pthread_mutex_lock(&mutex_procesos);
         list_add(lista_procesos, nuevo);
@@ -560,15 +568,24 @@ void EnviarAIO(char *tipo_buscado, int operacion, int pid, void *params)
         EliminarPaquete(paq_km);
 
         // el KM responde con EnviarPaquete: leer op code + paquete
-        RecibirOperacion(socket_kernel_memory);              // consume el op (LEER)
-        t_list *resp = RecibirPaquete(socket_kernel_memory); // los bytes en el índice 0
-        pthread_mutex_unlock(&mutex_kernel_memory);
+        int op_km = RecibirOperacion(socket_kernel_memory);
+        if (op_km == LEER)
+        {
+            t_list *resp = RecibirPaquete(socket_kernel_memory);
+            pthread_mutex_unlock(&mutex_kernel_memory);
 
-        // armar el paquete para el IO: [pid][tamaño][bytes]
-        AgregarAPaquete(paquete, &tamanio, sizeof(int));
-        AgregarAPaquete(paquete, list_get(resp, 0), tamanio);
+            // extraigo los bytes y los acoplamos limpios al paquete de la IO
+            void *bytes_leidos = list_get(resp, 0);
+            AgregarAPaquete(paquete, bytes_leidos, tamanio);
 
-        list_destroy_and_destroy_elements(resp, free);
+            // libero SÓLO el contenedor administrativo de la lista para evitar doble free o corrupción
+            list_destroy(resp);
+        }
+        else
+        {
+            pthread_mutex_unlock(&mutex_kernel_memory);
+            log_error(logger, "## Error: Se esperaba OpCode LEER de KM pero llegó: %d", op_km);
+        }
     }
 
     EnviarPaquete(paquete, io_destino->socket);
@@ -628,18 +645,35 @@ void *ManejarCliente(void *arg)
         int id_cpu;
         recv(socket_cliente, &id_cpu, sizeof(int), MSG_WAITALL);
 
-        // Buscamos la CPU que se conectó antes en la lista y le guardamos su socket de interrupción
-        pthread_mutex_lock(&mutex_cpus);
-        for (int i = 0; i < list_size(lista_cpus); i++)
+        // la conexión principal puede estar registrándose EN ESTE INSTANTE:
+        // reintentar hasta 1 segundo antes de rendirse
+        t_cpu_conectada *cpu_encontrada = NULL;
+        for (int intento = 0; intento < 100 && cpu_encontrada == NULL; intento++)
         {
-            t_cpu_conectada *cpu = list_get(lista_cpus, i);
-            if (cpu->id_cpu == id_cpu)
+            pthread_mutex_lock(&mutex_cpus);
+            for (int i = 0; i < list_size(lista_cpus); i++)
             {
-                cpu->socket_interrupt = socket_cliente;
-                break;
+                t_cpu_conectada *cpu = list_get(lista_cpus, i);
+                if (cpu->id_cpu == id_cpu)
+                {
+                    cpu_encontrada = cpu;
+                    break;
+                }
             }
+            pthread_mutex_unlock(&mutex_cpus);
+            if (cpu_encontrada == NULL)
+                usleep(10000); // 10ms y reintento
         }
-        pthread_mutex_unlock(&mutex_cpus);
+
+        if (cpu_encontrada == NULL)
+        {
+            log_error(logger, "## Canal de interrupciones: CPU %d nunca se registró. Cerrando.", id_cpu);
+            close(socket_cliente);
+            break;
+        }
+
+        cpu_encontrada->socket_interrupt = socket_cliente;
+        log_info(logger, "## Canal de interrupciones registrado para CPU %d (socket %d)", id_cpu, socket_cliente);
         break;
     }
     default:
@@ -658,11 +692,12 @@ void RegistrarCPU(int socket_cliente)
     recv(socket_cliente, &id_cpu, sizeof(int), MSG_WAITALL);
 
     // Crear estructura
-    t_cpu_conectada *cpu = malloc(sizeof(t_cpu_conectada));
+    t_cpu_conectada *cpu = calloc(1, sizeof(t_cpu_conectada));
     cpu->socket = socket_cliente;
     cpu->id_cpu = id_cpu;
     cpu->ocupado = false;
     cpu->pid_actual = -1;
+    cpu->socket_interrupt = -1;
 
     // Agregar a la lista global
     pthread_mutex_lock(&mutex_cpus);
@@ -754,8 +789,6 @@ void *AtenderCPU(void *args)
 
                 log_info(logger, "## (%d) Proceso devuelto por CPU %d - Motivo: %s", pid, cpu->id_cpu, motivo);
 
-                list_destroy_and_destroy_elements(valores, free);
-
                 proceso *p = BuscarProceso(pid);
 
                 pthread_mutex_lock(&mutex_quantum);
@@ -781,6 +814,7 @@ void *AtenderCPU(void *args)
                     AgregarAPaquete(paquete, &pid, sizeof(int));
                     EnviarPaquete(paquete, socket_kernel_memory);
                     EliminarPaquete(paquete);
+                    RecibirOperacion(socket_kernel_memory);
                     pthread_mutex_unlock(&mutex_kernel_memory);
 
                     CambiarEstado(p, EXIT);
@@ -863,31 +897,37 @@ void *AtenderIO(void *args)
 
             if (strcmp(io->tipo_io, "STDIN") == 0)
             {
-                // el IO manda los bytes que leyó del teclado
-                // int size;
                 void *bytes = list_get(valores, 1);
-                int size = p->tamanio_io;
-                // void *bytes = RecibirBuffer(&size, io->socket);
 
                 pthread_mutex_lock(&mutex_kernel_memory);
-                t_paquete *paquete = CrearPaquete(ESCRIBIR);
-                AgregarAPaquete(paquete, &pid, sizeof(int));
-                AgregarAPaquete(paquete, &(p->dir_fisica_io), sizeof(int));
-                AgregarAPaquete(paquete, &(p->tamanio_io), sizeof(int));
-                AgregarAPaquete(paquete, bytes, size);
-                EnviarPaquete(paquete, socket_kernel_memory);
-                EliminarPaquete(paquete);
-
-                RecibirOperacion(socket_kernel_memory); // confirmación
-                pthread_mutex_unlock(&mutex_kernel_memory);
-
-                // free(bytes);
+                if (p->estado == SUSP_BLOCK)
+                {
+                    // segmento en SWAP: diferir hasta la des-suspensión
+                    p->bytes_pendientes = malloc(p->tamanio_io);
+                    memcpy(p->bytes_pendientes, bytes, p->tamanio_io);
+                    p->tam_pendiente = p->tamanio_io;
+                    pthread_mutex_unlock(&mutex_kernel_memory);
+                }
+                else
+                {
+                    // segmento en RAM: escribir ya
+                    t_paquete *paquete = CrearPaquete(ESCRIBIR);
+                    AgregarAPaquete(paquete, &pid, sizeof(int));
+                    AgregarAPaquete(paquete, &(p->dir_fisica_io), sizeof(int));
+                    AgregarAPaquete(paquete, &(p->tamanio_io), sizeof(int));
+                    AgregarAPaquete(paquete, bytes, p->tamanio_io);
+                    EnviarPaquete(paquete, socket_kernel_memory);
+                    EliminarPaquete(paquete);
+                    RecibirOperacion(socket_kernel_memory);
+                    pthread_mutex_unlock(&mutex_kernel_memory);
+                }
             }
 
             if (p->estado == SUSP_BLOCK)
             {
                 CambiarEstado(p, SUSP_READY);
                 pthread_mutex_lock(&mutex_susp);
+                list_remove_element(cola_susp_block->elements, p);
                 queue_push(cola_susp_ready, p);
                 pthread_mutex_unlock(&mutex_susp);
                 log_info(logger, "## (%d) finalizó IO y pasa a SUSP. READY", p->pid);
@@ -1047,13 +1087,6 @@ void *PlanificadorMedianoPlazo(void *args)
         // trabajar sobre una lista temporal para no modificar la cola mientras iteramos
         t_list *suspendidos = list_create();
 
-        // agregar los de SUSP_BLOCK
-        t_queue *temp_block = cola_susp_block;
-        while (!queue_is_empty(temp_block))
-        {
-            list_add(suspendidos, queue_pop(temp_block));
-        }
-
         // agregar los de SUSP_READY
         t_queue *temp_ready = cola_susp_ready;
         while (!queue_is_empty(temp_ready))
@@ -1083,18 +1116,7 @@ void *PlanificadorMedianoPlazo(void *args)
 
             if (respuesta == PROCESO_CARGADO)
             {
-                // hay espacio: des-suspender
-                if (p->estado == SUSP_BLOCK)
-                {
-                    // todavía esperando IO → SUSP_READY
-                    CambiarEstado(p, SUSP_READY);
-
-                    pthread_mutex_lock(&mutex_susp);
-                    queue_push(cola_susp_ready, p);
-                    pthread_mutex_unlock(&mutex_susp);
-                    // sem_post(&sem_memoria_disponible);
-                }
-                else if (p->estado == SUSP_READY)
+                if (p->estado == SUSP_READY)
                 {
                     // pedir al Memory que traiga los segmentos del SWAP ANTES de replanificar
                     pthread_mutex_lock(&mutex_kernel_memory);
@@ -1102,14 +1124,37 @@ void *PlanificadorMedianoPlazo(void *args)
                     AgregarAPaquete(paq, &(p->pid), sizeof(int));
                     EnviarPaquete(paq, socket_kernel_memory);
                     EliminarPaquete(paq);
+                    int conf = RecibirOperacion(socket_kernel_memory);
 
-                    // Sincronizamos el caño consumiendo el MENSAJE de confirmación.
-                    // Esto asegura que KM terminó de restaurar los segmentos en RAM antes de que la CPU intente leerlos.
-                    RecibirOperacion(socket_kernel_memory);
+                    if (conf == MENSAJE && p->bytes_pendientes != NULL)
+                    {
+                        t_paquete *paq_w = CrearPaquete(ESCRIBIR);
+                        AgregarAPaquete(paq_w, &(p->pid), sizeof(int));
+                        AgregarAPaquete(paq_w, &(p->dir_fisica_io), sizeof(int));
+                        AgregarAPaquete(paq_w, &(p->tam_pendiente), sizeof(int));
+                        AgregarAPaquete(paq_w, p->bytes_pendientes, p->tam_pendiente);
+                        EnviarPaquete(paq_w, socket_kernel_memory);
+                        EliminarPaquete(paq_w);
+                        RecibirOperacion(socket_kernel_memory); // confirmación del ESCRIBIR
+
+                        free(p->bytes_pendientes);
+                        p->bytes_pendientes = NULL;
+                        p->tam_pendiente = 0;
+                    }
                     pthread_mutex_unlock(&mutex_kernel_memory);
                     // IO ya terminó → READY
                     // Ahora que la RAM física está lista, el proceso vuelve a competir en el corto plazo
-                    EncolarReady(p);
+                    if (conf == MENSAJE)
+                    {
+                        EncolarReady(p);
+                    }
+                    else
+                    {
+                        // el KM no pudo restaurar: NO replanificar
+                        pthread_mutex_lock(&mutex_susp);
+                        queue_push(cola_susp_ready, p);
+                        pthread_mutex_unlock(&mutex_susp);
+                    }
                 }
             }
             else
@@ -1248,6 +1293,8 @@ void IniciarProceso(int tamanio, char *codigo)
     proc_inicial->prioridad = 0;
     proc_inicial->prioridad_heredada = false;
     proc_inicial->estado = NEW;
+    proc_inicial->bytes_pendientes = NULL;
+    proc_inicial->tam_pendiente = 0;
 
     pthread_mutex_lock(&mutex_procesos);
     list_add(lista_procesos, proc_inicial);
@@ -1316,6 +1363,8 @@ void *HiloQuantum(void *args)
     int pid = datos->pid;
     free(datos);
 
+    
+
     // esperar el quantum en microsegundos
     usleep(rr_quantum * 1000);
 
@@ -1331,7 +1380,16 @@ void *HiloQuantum(void *args)
 
     // mandar interrupción a la CPU
     log_info(logger, "## (%d) - Desalojado por fin de quantum", pid);
-    EnviarOpCode(cpu->socket_interrupt, INTERRUPCION_QUANTUM); // op code de interrupción por quantum
+    log_info(logger, "DEBUG: interrupcion via socket_interrupt=%d (CPU %d)", cpu->socket_interrupt, cpu->id_cpu);
+    
+    if (cpu->socket_interrupt <= 0)
+    {
+        log_error(logger, "## Interrupción a CPU %d SIN canal registrado (socket_interrupt=%d)", cpu->id_cpu, cpu->socket_interrupt);
+    }
+    else
+    {
+        EnviarOpCode(cpu->socket_interrupt, INTERRUPCION_QUANTUM);
+    }
 
     return NULL;
 }
@@ -1348,19 +1406,17 @@ void *HiloSuspension(void *args)
     if (p == NULL)
         return NULL;
 
+    pthread_mutex_lock(&mutex_kernel_memory);
     pthread_mutex_lock(&mutex_procesos);
     if (p->estado != BLOCK)
     {
-        // el proceso ya salió de BLOCK antes del timeout (IO terminó)
         pthread_mutex_unlock(&mutex_procesos);
+        pthread_mutex_unlock(&mutex_kernel_memory);
         return NULL;
     }
-
-    // sigue en BLOCK, suspender
     CambiarEstado(p, SUSP_BLOCK);
     p->tiempo_suspension = time(NULL);
 
-    // sacar de cola_block y meter en cola_susp_block
     pthread_mutex_lock(&mutex_block);
     list_remove_element(cola_block->elements, p);
     pthread_mutex_unlock(&mutex_block);
@@ -1368,11 +1424,9 @@ void *HiloSuspension(void *args)
     pthread_mutex_lock(&mutex_susp);
     queue_push(cola_susp_block, p);
     pthread_mutex_unlock(&mutex_susp);
-
     pthread_mutex_unlock(&mutex_procesos);
 
-    // avisar a Kernel Memory que suspenda el proceso (mueve segmentos a SWAP)
-    pthread_mutex_lock(&mutex_kernel_memory);
+    // avisar al KM SIN soltar mutex_kernel_memory (atómico con el cambio de estado)
     t_paquete *paquete = CrearPaquete(SUSPENDER_PROCESO);
     AgregarAPaquete(paquete, &pid, sizeof(int));
     EnviarPaquete(paquete, socket_kernel_memory);
@@ -1381,7 +1435,6 @@ void *HiloSuspension(void *args)
     pthread_mutex_unlock(&mutex_kernel_memory);
 
     log_info(logger, "## (%d) Pasa del estado BLOCK al estado SUSP. BLOCK por timeout", pid);
-
     return NULL;
 }
 
@@ -1445,11 +1498,18 @@ void IntentarDesalojoPorPrioridad(proceso *nuevo)
             proceso *ejecutando = BuscarProceso(cpu->pid_actual);
             if (ejecutando != NULL && ejecutando->prioridad > nuevo->prioridad)
             {
-                log_info(logger,
-                         "## (%d) Prioridad: %d - Desalojado por cola más prioritaria por el proceso %d con prioridad %d",
-                         ejecutando->pid, ejecutando->prioridad, nuevo->pid, nuevo->prioridad);
+                if (cpu->socket_interrupt <= 0)
+                {
+                    log_error(logger, "## Interrupción a CPU %d SIN canal registrado (socket_interrupt=%d)", cpu->id_cpu, cpu->socket_interrupt);
+                }
+                else
+                {
+                log_info(logger, "## (%d) Prioridad: %d - Desalojado por cola más prioritaria por el proceso %d con prioridad %d", ejecutando->pid, ejecutando->prioridad, nuevo->pid, nuevo->prioridad);
 
+                log_info(logger, "DEBUG: interrupcion via socket_interrupt=%d (CPU %d)", cpu->socket_interrupt, cpu->id_cpu);
                 EnviarOpCode(cpu->socket_interrupt, INTERRUPCION_DESALOJO_COLA);
+                }
+
                 break; // solo se desaloja 1 CPU por evento
             }
         }
@@ -1502,8 +1562,15 @@ void IniciarCompactacion()
         t_cpu_conectada *cpu = list_get(lista_cpus, i);
         if (cpu->ocupado)
         {
-            cpus_a_esperar++;
-            EnviarOpCode(cpu->socket_interrupt, INTERRUPCION_COMPACTACION);
+            if (cpu->socket_interrupt <= 0)
+            {
+                log_error(logger, "## Interrupción a CPU %d SIN canal registrado (socket_interrupt=%d)", cpu->id_cpu, cpu->socket_interrupt);
+            }
+            else
+            {
+                cpus_a_esperar++;
+                EnviarOpCode(cpu->socket_interrupt, INTERRUPCION_COMPACTACION);
+            }
         }
     }
     pthread_mutex_unlock(&mutex_cpus);

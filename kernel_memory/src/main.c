@@ -175,9 +175,9 @@ void InicarEstructurasMemoria()
     log_info(logger, "## Estructuras de Memoria iniciadas. Esperando Memory Sticks.");
 }
 
-void ObtenerConfig()
+void ObtenerConfig(char* path)
 {
-    config = config_create("kernel_memory.config");
+    config = config_create(path);
     if (config == NULL)
     {
         perror("No se pudo crear el config");
@@ -308,15 +308,14 @@ void suspender_proceso(uint32_t pid)
             consolidar_huecos_libres();
             pthread_mutex_unlock(&mutex_huecos);
 
-            // marco como que ya no está en RAM
-            seg->presente = false;
+            seg->presente = true;
 
             log_info(logger, "## PID: %d - Segmento %d movido a SWAP", pid, seg->id_segmento);
         }
     }
 }
 
-void desuspender_proceso(uint32_t pid, int socket_cliente)
+bool desuspender_proceso(uint32_t pid, int socket_cliente)
 {
     char *key = string_itoa(pid);
     pthread_mutex_lock(&mutex_tabla_segmentos);
@@ -325,7 +324,7 @@ void desuspender_proceso(uint32_t pid, int socket_cliente)
     free(key);
 
     if (tabla == NULL)
-        return;
+        return false;
 
     for (int i = 0; i < list_size(tabla); i++)
     {
@@ -342,7 +341,7 @@ void desuspender_proceso(uint32_t pid, int socket_cliente)
                 // El Scheduler se supone que verificó el espacio antes, pero por las dudas:
                 log_error(logger, "No hay hueco para des-suspender el segmento %d del PID %d", seg->id_segmento, pid);
                 pthread_mutex_unlock(&mutex_huecos);
-                return;
+                return false;
             }
 
             // actualizo la base del segmento al nuevo hueco en RAM
@@ -416,7 +415,7 @@ void desuspender_proceso(uint32_t pid, int socket_cliente)
                     }
 
                     offset_segmento += bytes_a_copiar;
-                    list_destroy_and_destroy_elements(valores_bloque, free);
+                    list_destroy(valores_bloque);
                 }
 
                 // libero el bloque en el bitmap del SWAP
@@ -431,6 +430,7 @@ void desuspender_proceso(uint32_t pid, int socket_cliente)
             log_info(logger, "## PID: %d - Segmento %d restaurado en RAM (Base: %d)", pid, seg->id_segmento, seg->base);
         }
     }
+    return true;
 }
 
 void recolectar_segmentos_presentes(char *key, void *value)
@@ -540,6 +540,46 @@ void manejar_desconexion_memory_stick()
 
     EnviarOpCode(socket_kernel_scheduler_eventos, MEMORIA_CORRUPTA);
     log_error(logger, "CRÍTICO: Memory Stick desconectado. Notificando corrupción al Scheduler");
+}
+
+int traducir_direccion_logica(uint32_t pid, uint32_t dir_logica, uint32_t *dir_fisica)
+{
+    // Usamos la misma matemática que implementaste en la CPU
+    uint32_t num_segmento = dir_logica / segment_max_size;
+    uint32_t desplazamiento = dir_logica % segment_max_size;
+
+    char *key = string_itoa(pid);
+    pthread_mutex_lock(&mutex_tabla_segmentos);
+    t_list *tabla = dictionary_get(tabla_segmentos, key);
+    free(key);
+
+    if (tabla == NULL)
+    {
+        pthread_mutex_unlock(&mutex_tabla_segmentos);
+        return -1;
+    }
+
+    t_segmento *segmento_encontrado = NULL;
+    for (int i = 0; i < list_size(tabla); i++)
+    {
+        t_segmento *seg = list_get(tabla, i);
+        // Buscamos por el id real, no por el índice de la lista
+        if (seg->id_segmento == num_segmento)
+        {
+            segmento_encontrado = seg;
+            break;
+        }
+    }
+
+    if (segmento_encontrado == NULL || !segmento_encontrado->presente)
+    {
+        pthread_mutex_unlock(&mutex_tabla_segmentos);
+        return -1; // Segmento no existe o está en SWAP
+    }
+
+    *dir_fisica = segmento_encontrado->base + desplazamiento;
+    pthread_mutex_unlock(&mutex_tabla_segmentos);
+    return 0;
 }
 
 // ejecuto cada hilo
@@ -922,8 +962,23 @@ void atender_cliente(void *void_socket)
         {
             t_list *valores = RecibirPaquete(socket_cliente);
             uint32_t pid = *(uint32_t *)list_get(valores, 0);
-            uint32_t dir_fisica = *(uint32_t *)list_get(valores, 1); // ¡Ya viene como física desde la CPU!
+            uint32_t dir_logica = *(uint32_t *)list_get(valores, 1); // ¡Ya viene como física desde la CPU!
             uint32_t tamanio = *(uint32_t *)list_get(valores, 2);
+
+            uint32_t dir_fisica;
+            if (traducir_direccion_logica(pid, dir_logica, &dir_fisica) == -1)
+            {
+                log_error(logger, "## PID: %d - Error de traducción: Dirección lógica %d en SWAP o inexistente", pid, dir_logica);
+                // Enviamos un buffer vacío de ceros para no colgar el flujo de red de quien espera la respuesta
+                void *ceros = calloc(1, tamanio);
+                t_paquete *res_error = CrearPaquete(LEER);
+                AgregarAPaquete(res_error, ceros, tamanio);
+                EnviarPaquete(res_error, socket_cliente);
+                EliminarPaquete(res_error);
+                free(ceros);
+                list_destroy_and_destroy_elements(valores, free);
+                break;
+            }
 
             log_info(logger, "## PID: %d Lectura Dir. Física: %d Tamaño: %d", pid, dir_fisica, tamanio);
 
@@ -960,10 +1015,18 @@ void atender_cliente(void *void_socket)
         {
             t_list *valores = RecibirPaquete(socket_cliente);
             uint32_t pid = *(uint32_t *)list_get(valores, 0);
-            uint32_t dir_fisica = *(uint32_t *)list_get(valores, 1); // ¡Ya viene como física desde la CPU!
+            uint32_t dir_logica = *(uint32_t *)list_get(valores, 1); // ¡Ya viene como física desde la CPU!
             uint32_t tamanio = *(uint32_t *)list_get(valores, 2);
             void *datos = list_get(valores, 3);
 
+            uint32_t dir_fisica;
+            if (traducir_direccion_logica(pid, dir_logica, &dir_fisica) == -1)
+            {
+                log_error(logger, "## PID: %d - Error de traducción en ESCRIBIR: Dirección lógica %d", pid, dir_logica);
+                EnviarOpCode(socket_cliente, MENSAJE); // Respondemos un mensaje genérico para destrabar el Scheduler
+                list_destroy_and_destroy_elements(valores, free);
+                break;
+            }
             log_info(logger, "## PID: %d Escritura Dir. Física: %d Tamaño: %d", pid, dir_fisica, tamanio);
 
             t_memory_stick *stick = buscar_stick_por_direccion(dir_fisica);
@@ -991,26 +1054,6 @@ void atender_cliente(void *void_socket)
 
         case CONSULTAR_ESPACIO:
         {
-
-            /*t_list *valores = RecibirPaquete(socket_cliente);
-
-            int espacio_libre_total = 0;
-
-            pthread_mutex_lock(&mutex_huecos);
-            for (int i = 0; i < list_size(lista_huecos_libres); i++)
-            {
-                t_hueco_libre *h = list_get(lista_huecos_libres, i);
-                espacio_libre_total += h->tamanio;
-            }
-            pthread_mutex_unlock(&mutex_huecos);
-
-            t_paquete *res = CrearPaquete(CONSULTAR_ESPACIO);
-            AgregarAPaquete(res, &espacio_libre_total, sizeof(uint32_t));
-            EnviarPaquete(res, socket_cliente);
-            EliminarPaquete(res);
-
-            list_destroy_and_destroy_elements(valores, free);
-            break;*/
             t_list *valores = RecibirPaquete(socket_cliente);
             uint32_t pid = *(uint32_t *)list_get(valores, 0);
 
@@ -1143,8 +1186,8 @@ void atender_cliente(void *void_socket)
             t_list *valores = RecibirPaquete(socket_cliente);
             uint32_t pid_a_desuspender = *(uint32_t *)list_get(valores, 0);
 
-            desuspender_proceso(pid_a_desuspender, socket_cliente);
-            EnviarOpCode(socket_cliente, MENSAJE);
+            bool ok = desuspender_proceso(pid_a_desuspender, socket_cliente);
+            EnviarOpCode(socket_cliente, ok ? MENSAJE : ESPACIO_INSUFICIENTE);
 
             list_destroy_and_destroy_elements(valores, free);
             break;
@@ -1191,7 +1234,7 @@ int main(int argc, char *argv[])
 {
 
     saludar("kernel_memory");
-    ObtenerConfig();
+    ObtenerConfig(argv[1]);
 
     procesos = dictionary_create();
     pthread_mutex_init(&mutex_procesos, NULL);

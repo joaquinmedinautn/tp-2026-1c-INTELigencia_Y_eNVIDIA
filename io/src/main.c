@@ -105,7 +105,7 @@ int main(int argc, char *argv[])
             printf("DEBUG: Obtenido texto");
             memcpy(texto, list_get(valores, 2), tam); // copia terminada en \0
             log_info(logger, "## PID: %d - %s", pid, texto);
-            free(texto);
+            
 
             log_info(logger, "## PID: %d - Inicio de IO", pid);
             log_info(logger, "## PID: %d - %s", pid, texto);
@@ -118,6 +118,7 @@ int main(int argc, char *argv[])
             EliminarPaquete(p);
 
             list_destroy_and_destroy_elements(valores, free);
+            free(texto);
             break;
         }
 

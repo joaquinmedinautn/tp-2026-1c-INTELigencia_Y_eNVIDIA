@@ -27,6 +27,8 @@ typedef struct
     int dir_fisica_io;
     int tamanio_io;
     time_t tiempo_suspension;
+    void *bytes_pendientes; 
+    int tam_pendiente; 
 } proceso;
 
 typedef struct
