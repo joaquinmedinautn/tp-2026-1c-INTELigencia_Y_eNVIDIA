@@ -57,7 +57,7 @@ void IniciarArchivoSwap(){
     log_info(logger, "## Archivo SWAP iniciado correctamente en %s", swap_file_path);
 }
 
-void CerarArchivoSwap(){
+void CerrarArchivoSwap(){
     munmap(espacio_swap, swap_file_size);
     close(fd_swap);
     free(swap_file_path);
@@ -88,7 +88,7 @@ int main(int argc, char *argv[])
         int cod_op = RecibirOperacion(socket_kernel_memory);
 
         if(cod_op == -1){
-            log_error(logger,"Kernel  Memoryse desconcectó. Cerrando SWAP..");
+            log_error(logger,"Kernel  Memory se desconcectó. Cerrando SWAP..");
             break;
         }
         switch (cod_op){
@@ -137,7 +137,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    CerarArchivoSwap();
+    CerrarArchivoSwap();
     log_destroy(logger);
     free(ip_kernel_memory);
     return EXIT_SUCCESS;

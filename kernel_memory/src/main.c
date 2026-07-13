@@ -649,7 +649,7 @@ void atender_cliente(void *void_socket)
         log_info(logger, "## SWAP Conectado - Bloques: %d, Tamaño total: %d bytes", cant_bloques_swap, swap_file_size);
 
         list_destroy_and_destroy_elements(valores_swap, free);
-        break;
+        return;
     }
     case KERNEL_SCHEDULER_EVENTOS:
     {
@@ -962,9 +962,10 @@ void atender_cliente(void *void_socket)
         {
             t_list *valores = RecibirPaquete(socket_cliente);
             uint32_t pid = *(uint32_t *)list_get(valores, 0);
-            uint32_t dir_logica = *(uint32_t *)list_get(valores, 1); // ¡Ya viene como física desde la CPU!
+            uint32_t dir_fisica = *(uint32_t *)list_get(valores, 1); // ¡Ya viene como física desde la CPU!
             uint32_t tamanio = *(uint32_t *)list_get(valores, 2);
-
+            
+            /*
             uint32_t dir_fisica;
             if (traducir_direccion_logica(pid, dir_logica, &dir_fisica) == -1)
             {
@@ -979,7 +980,7 @@ void atender_cliente(void *void_socket)
                 list_destroy_and_destroy_elements(valores, free);
                 break;
             }
-
+            */
             log_info(logger, "## PID: %d Lectura Dir. Física: %d Tamaño: %d", pid, dir_fisica, tamanio);
 
             t_memory_stick *stick = buscar_stick_por_direccion(dir_fisica);
@@ -1015,10 +1016,11 @@ void atender_cliente(void *void_socket)
         {
             t_list *valores = RecibirPaquete(socket_cliente);
             uint32_t pid = *(uint32_t *)list_get(valores, 0);
-            uint32_t dir_logica = *(uint32_t *)list_get(valores, 1); // ¡Ya viene como física desde la CPU!
+            uint32_t dir_fisica = *(uint32_t *)list_get(valores, 1); // ¡Ya viene como física desde la CPU!
             uint32_t tamanio = *(uint32_t *)list_get(valores, 2);
             void *datos = list_get(valores, 3);
 
+            /*
             uint32_t dir_fisica;
             if (traducir_direccion_logica(pid, dir_logica, &dir_fisica) == -1)
             {
@@ -1027,6 +1029,9 @@ void atender_cliente(void *void_socket)
                 list_destroy_and_destroy_elements(valores, free);
                 break;
             }
+
+            */
+
             log_info(logger, "## PID: %d Escritura Dir. Física: %d Tamaño: %d", pid, dir_fisica, tamanio);
 
             t_memory_stick *stick = buscar_stick_por_direccion(dir_fisica);
@@ -1153,7 +1158,7 @@ void atender_cliente(void *void_socket)
                 {
                     EnviarOpCode(socket_cliente, NECESITA_COMPACTACION);
                     EnviarOpCode(socket_kernel_scheduler_eventos, SOLICITUD_COMPACTACION);
-                    log_info(logger, "## PID: %d - Requiere comparctación para para segmento de %d bytes. Solicitud enviada al Scheduler.", pid, tamanio_pedido);
+                    log_info(logger, "## PID: %d - Requiere compactación para segmento de %d bytes. Solicitud enviada al Scheduler.", pid, tamanio_pedido);
                 }
                 else
                 {
@@ -1223,6 +1228,8 @@ void atender_cliente(void *void_socket)
             break;
         }
         default:
+            printf("DEBUG: socket_cliente: %d\n", socket_cliente);
+            printf("DEBUG: Codigo de op: %d\n", cod_op_mensaje);
             log_warning(logger, "Operación desconocida");
             break;
         }

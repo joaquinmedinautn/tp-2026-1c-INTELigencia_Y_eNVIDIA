@@ -576,15 +576,20 @@ void EnviarAIO(char *tipo_buscado, int operacion, int pid, void *params)
 
             // extraigo los bytes y los acoplamos limpios al paquete de la IO
             void *bytes_leidos = list_get(resp, 0);
+            AgregarAPaquete(paquete, &tamanio, sizeof(int));
             AgregarAPaquete(paquete, bytes_leidos, tamanio);
 
-            // libero SÓLO el contenedor administrativo de la lista para evitar doble free o corrupción
-            list_destroy(resp);
+            list_destroy_and_destroy_elements(resp, free);
         }
         else
         {
             pthread_mutex_unlock(&mutex_kernel_memory);
             log_error(logger, "## Error: Se esperaba OpCode LEER de KM pero llegó: %d", op_km);
+
+            void *ceros = calloc(1, tamanio);
+            AgregarAPaquete(paquete, &tamanio, sizeof(int));
+            AgregarAPaquete(paquete, ceros, tamanio);
+            free(ceros);
         }
     }
 
@@ -888,7 +893,7 @@ void *AtenderIO(void *args)
 
             proceso *p = BuscarProceso(pid);
 
-            if (p == NULL) // <-- agregar esta protección
+            if (p == NULL)
             {
                 log_error(logger, "## IO_FINALIZADO: no se encontró el proceso %d", pid);
                 list_destroy_and_destroy_elements(valores, free);
@@ -900,7 +905,7 @@ void *AtenderIO(void *args)
                 void *bytes = list_get(valores, 1);
 
                 pthread_mutex_lock(&mutex_kernel_memory);
-                if (p->estado == SUSP_BLOCK)
+                if (p->estado == SUSP_BLOCK || p->estado == SUSP_READY)
                 {
                     // segmento en SWAP: diferir hasta la des-suspensión
                     p->bytes_pendientes = malloc(p->tamanio_io);

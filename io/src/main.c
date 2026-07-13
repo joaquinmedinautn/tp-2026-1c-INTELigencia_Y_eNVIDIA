@@ -63,7 +63,7 @@ int main(int argc, char *argv[])
             log_error(logger, "Desconectado del Scheduler");
             break;
         }
-        printf("DEBUG: entrando al switch");
+        printf("DEBUG: entrando al switch\n");
         switch (cod_op)
         {
         case IO_SLEEP:
@@ -92,8 +92,8 @@ int main(int argc, char *argv[])
         }
 
         case IO_STDOUT_WRITE:
-        {   
-            printf("DEBUG: Entrando por IO_STDOUT_WRITE\n");
+        {
+            /*printf("DEBUG: Entrando por IO_STDOUT_WRITE\n");
 
             t_list *valores = RecibirPaquete(socket_kernel_scheduler);
             printf("DEBUG: Obtenidos los valores\n");
@@ -105,7 +105,7 @@ int main(int argc, char *argv[])
             printf("DEBUG: Obtenido texto");
             memcpy(texto, list_get(valores, 2), tam); // copia terminada en \0
             log_info(logger, "## PID: %d - %s", pid, texto);
-            
+
 
             log_info(logger, "## PID: %d - Inicio de IO", pid);
             log_info(logger, "## PID: %d - %s", pid, texto);
@@ -119,6 +119,45 @@ int main(int argc, char *argv[])
 
             list_destroy_and_destroy_elements(valores, free);
             free(texto);
+            break;*/
+
+            t_list *valores = RecibirPaquete(socket_kernel_scheduler);
+
+            // DEFENSA: el formato esperado es [pid][tamaño][bytes]. Si falta algo,
+            // loguear y seguir vivo (nunca crashear el módulo por un paquete malo).
+            if (list_size(valores) < 3)
+            {
+                log_error(logger, "STDOUT: paquete con %d elementos (esperaba 3). ¿EnviarAIO desactualizado?",
+                          list_size(valores));
+                list_destroy_and_destroy_elements(valores, free);
+                break;
+            }
+
+            int pid = *(int *)list_get(valores, 0);
+            int tam = *(int *)list_get(valores, 1);
+
+            if (tam <= 0 || tam > 4096) // un tamaño absurdo delata bytes corridos
+            {
+                log_error(logger, "STDOUT: tamaño inválido %d para PID %d. Paquete descartado.", tam, pid);
+                list_destroy_and_destroy_elements(valores, free);
+                break;
+            }
+
+            char *texto = calloc(1, tam + 1);
+            memcpy(texto, list_get(valores, 2), tam); // copia terminada en \0
+
+            log_info(logger, "## PID: %d - Inicio de IO", pid);
+            log_info(logger, "## PID: %d - %s", pid, texto);
+            log_info(logger, "## PID: %d - Fin de IO", pid);
+
+            // confirmar finalización al Scheduler
+            t_paquete *p = CrearPaquete(IO_FINALIZADO);
+            AgregarAPaquete(p, &pid, sizeof(int));
+            EnviarPaquete(p, socket_kernel_scheduler);
+            EliminarPaquete(p);
+
+            free(texto);
+            list_destroy_and_destroy_elements(valores, free);
             break;
         }
 
@@ -143,7 +182,8 @@ int main(int argc, char *argv[])
             if (!entrada_completa) // solo drenar si el usuario tipeó de más
             {
                 int c;
-                while ((c = getchar()) != '\n' && c != EOF);
+                while ((c = getchar()) != '\n' && c != EOF)
+                    ;
             }
 
             log_info(logger, "## PID: %d - Fin de IO", pid);
