@@ -229,7 +229,7 @@ int execute(t_instruccion *inst)
         uint32_t valor = atoi(inst->params[1]);
         asignar_valor_registro(inst->params[0], valor);
         if (strcmp(inst->params[0], "PC") == 0)
-        return 1;   
+            return 1;
     }
     else if (strcmp(inst->nombre, "SUM") == 0)
     {
@@ -745,7 +745,6 @@ void iniciar_ciclo(int pid)
             // 2. Devolvemos el PID al Scheduler con motivo INTERRUPCION
             t_paquete *paquete2 = CrearPaquete(CPU_PID_DEVUELTO);
             AgregarAPaquete(paquete2, &pid_actual, sizeof(int));
-            // char *motivo = "INTERRUPCION";
             pthread_mutex_lock(&mutex_interrupcion);
             hay_interrupcion = 0;
             int motivo_cod = codigo_interrupcion;
@@ -754,6 +753,11 @@ void iniciar_ciclo(int pid)
             if (motivo_cod == INTERRUPCION_COMPACTACION)
             {
                 char *motivo = "COMPACTACION";
+                AgregarAPaquete(paquete2, motivo, strlen(motivo) + 1);
+            }
+            else if (motivo_cod == INTERRUPCION_DESALOJO_COLA)
+            {
+                char *motivo = "DESALOJO_COLA";
                 AgregarAPaquete(paquete2, motivo, strlen(motivo) + 1);
             }
             else

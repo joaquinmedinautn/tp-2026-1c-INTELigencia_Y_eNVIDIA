@@ -53,7 +53,7 @@ typedef struct {
 
 typedef struct {
     char nombre[50];
-    int pid_dueño;      // -1 si está libre
+    int pid_duenio;      // -1 si está libre
     t_queue* cola_espera;  // procesos esperando
     pthread_mutex_t mutex_syscall;
 } t_mutex_proceso;

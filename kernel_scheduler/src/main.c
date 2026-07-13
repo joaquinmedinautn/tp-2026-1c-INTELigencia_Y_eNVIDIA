@@ -216,7 +216,7 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
         {
             m = malloc(sizeof(t_mutex_proceso));
             strcpy(m->nombre, nombre_mutex);
-            m->pid_dueño = -1;
+            m->pid_duenio = -1;
             m->cola_espera = queue_create();
             pthread_mutex_init(&m->mutex_syscall, NULL);
 
@@ -245,10 +245,10 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
         }
 
         pthread_mutex_lock(&m->mutex_syscall);
-        if (m->pid_dueño == -1)
+        if (m->pid_duenio == -1)
         {
             // mutex libre, el proceso lo toma y sigue ejecutando
-            m->pid_dueño = pid;
+            m->pid_duenio = pid;
             pthread_mutex_unlock(&m->mutex_syscall);
 
             log_info(logger, "## (%d) Toma el Mutex %s", pid, nombre_mutex);
@@ -264,6 +264,17 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
             // mutex tomado, el proceso queda en BLOCK esperando
             log_info(logger, "## (%d) queda bloqueado esperando Mutex %s", pid, nombre_mutex);
             queue_push(m->cola_espera, p);
+
+            proceso *duenio = BuscarProceso(m->pid_duenio);
+            if (duenio != NULL && p->prioridad < duenio->prioridad)
+            {
+                if (!duenio->prioridad_heredada)
+                {
+                    duenio->prioridad_original = duenio->prioridad;
+                    duenio->prioridad_heredada = true;
+                }
+                CambiarPrioridadProceso(duenio, p->prioridad);
+            }
             pthread_mutex_unlock(&m->mutex_syscall);
 
             CambiarEstado(p, BLOCK);
@@ -308,7 +319,7 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
         {
             // hay procesos esperando, el primero toma el mutex
             proceso *siguiente = queue_pop(m->cola_espera);
-            m->pid_dueño = siguiente->pid;
+            m->pid_duenio = siguiente->pid;
             pthread_mutex_unlock(&m->mutex_syscall);
 
             log_info(logger, "## (%d) Toma el Mutex %s", siguiente->pid, nombre_mutex);
@@ -323,7 +334,7 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
         else
         {
             // nadie esperando, el mutex queda libre
-            m->pid_dueño = -1;
+            m->pid_duenio = -1;
             pthread_mutex_unlock(&m->mutex_syscall);
         }
 
@@ -1368,8 +1379,6 @@ void *HiloQuantum(void *args)
     int pid = datos->pid;
     free(datos);
 
-    
-
     // esperar el quantum en microsegundos
     usleep(rr_quantum * 1000);
 
@@ -1386,7 +1395,7 @@ void *HiloQuantum(void *args)
     // mandar interrupción a la CPU
     log_info(logger, "## (%d) - Desalojado por fin de quantum", pid);
     log_info(logger, "DEBUG: interrupcion via socket_interrupt=%d (CPU %d)", cpu->socket_interrupt, cpu->id_cpu);
-    
+
     if (cpu->socket_interrupt <= 0)
     {
         log_error(logger, "## Interrupción a CPU %d SIN canal registrado (socket_interrupt=%d)", cpu->id_cpu, cpu->socket_interrupt);
@@ -1509,10 +1518,10 @@ void IntentarDesalojoPorPrioridad(proceso *nuevo)
                 }
                 else
                 {
-                log_info(logger, "## (%d) Prioridad: %d - Desalojado por cola más prioritaria por el proceso %d con prioridad %d", ejecutando->pid, ejecutando->prioridad, nuevo->pid, nuevo->prioridad);
+                    log_info(logger, "## (%d) Prioridad: %d - Desalojado por cola más prioritaria por el proceso %d con prioridad %d", ejecutando->pid, ejecutando->prioridad, nuevo->pid, nuevo->prioridad);
 
-                log_info(logger, "DEBUG: interrupcion via socket_interrupt=%d (CPU %d)", cpu->socket_interrupt, cpu->id_cpu);
-                EnviarOpCode(cpu->socket_interrupt, INTERRUPCION_DESALOJO_COLA);
+                    log_info(logger, "DEBUG: interrupcion via socket_interrupt=%d (CPU %d)", cpu->socket_interrupt, cpu->id_cpu);
+                    EnviarOpCode(cpu->socket_interrupt, INTERRUPCION_DESALOJO_COLA);
                 }
 
                 break; // solo se desaloja 1 CPU por evento
