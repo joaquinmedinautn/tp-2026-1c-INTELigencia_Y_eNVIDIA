@@ -477,7 +477,7 @@ int execute(t_instruccion *inst)
         t_paquete *paquete = CrearPaquete(LEER);
         uint32_t pid_enviar = (uint32_t)pid_actual;
         AgregarAPaquete(paquete, &pid_enviar, sizeof(uint32_t));
-        AgregarAPaquete(paquete, &dir_logica, sizeof(uint32_t));
+        AgregarAPaquete(paquete, &dir_fisica, sizeof(uint32_t));   // ← era dir_logica: revertir
         AgregarAPaquete(paquete, &tamanio, sizeof(uint32_t));
         EnviarPaquete(paquete, socket_kernel_memory);
         EliminarPaquete(paquete);
@@ -549,7 +549,7 @@ int execute(t_instruccion *inst)
         // 3. ESCRIBIR en Kernel Memory usando la Dirección Física
         t_paquete *paquete = CrearPaquete(ESCRIBIR);
         AgregarAPaquete(paquete, &pid_actual, sizeof(uint32_t));
-        AgregarAPaquete(paquete, &dir_logica, sizeof(uint32_t));
+        AgregarAPaquete(paquete, &dir_fisica, sizeof(uint32_t));   // ← era dir_logica: revertir
         AgregarAPaquete(paquete, &tamanio, sizeof(uint32_t));
         AgregarAPaquete(paquete, dato, tamanio);
         EnviarPaquete(paquete, socket_kernel_memory);
@@ -710,7 +710,6 @@ void iniciar_ciclo(int pid)
     contexto.tabla_segmentos = list_create();
 
     int cant_segmentos = *(int *)list_get(valores_ctx, 11);
-    log_info(logger, "DEBUG: cant_segmentos recibido = %d", cant_segmentos);
     for (int i = 0; i < cant_segmentos; i++)
     {
         t_segmento *seg_recibido = (t_segmento *)list_get(valores_ctx, 12 + i);

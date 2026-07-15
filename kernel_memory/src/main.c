@@ -94,9 +94,6 @@ void consolidar_huecos_libres()
 
 t_hueco_libre *buscar_hueco_libre(uint32_t tamanio_pedido)
 {
-    log_info(logger, "DEBUG: Buscando hueco para %d bytes. Huecos disponibles en lista: %d",
-             tamanio_pedido, list_size(lista_huecos_libres));
-
     t_hueco_libre *hueco_seleccionado = NULL;
 
     for (int i = 0; i < list_size(lista_huecos_libres); i++)
@@ -126,7 +123,7 @@ t_hueco_libre *buscar_hueco_libre(uint32_t tamanio_pedido)
     }
     if (hueco_seleccionado == NULL)
     {
-        log_warning(logger, "DEBUG: ¡No se encontró hueco adecuado para %d bytes!", tamanio_pedido);
+        log_warning(logger, "¡No se encontró hueco adecuado para %d bytes!", tamanio_pedido);
     }
     return hueco_seleccionado;
 }
@@ -589,8 +586,6 @@ void atender_cliente(void *void_socket)
     free(void_socket);
 
     int cod_op = RecibirOperacion(socket_cliente);
-
-    printf("Codigo de operacion: %d\n", cod_op);
 
     switch (cod_op)
     {
@@ -1151,9 +1146,6 @@ void atender_cliente(void *void_socket)
                     espacio_libre_total += h->tamanio;
                 }
 
-                log_info(logger, "DEBUG: Fallo de asignación. Espacio total libre: %d bytes. Pedido: %d bytes.",
-                         espacio_libre_total, tamanio_pedido);
-
                 if (espacio_libre_total >= tamanio_pedido)
                 {
                     EnviarOpCode(socket_cliente, NECESITA_COMPACTACION);
@@ -1228,8 +1220,6 @@ void atender_cliente(void *void_socket)
             break;
         }
         default:
-            printf("DEBUG: socket_cliente: %d\n", socket_cliente);
-            printf("DEBUG: Codigo de op: %d\n", cod_op_mensaje);
             log_warning(logger, "Operación desconocida");
             break;
         }
@@ -1257,8 +1247,6 @@ int main(int argc, char *argv[])
     while (1)
     {
         int socket_cliente = EsperarConexion(socket_servidor);
-
-        printf("socket_cliente: %d\n", socket_cliente);
 
         pthread_t hilo;
         int *p_socket = malloc(sizeof(int));

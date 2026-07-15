@@ -139,21 +139,6 @@ void EnviarPaquete(t_paquete *paquete, int socket_conexion)
     free(a_enviar);
 }
 
-/*void EnviarOpCode(int socket_conexion, int OP)
-{
-    int size = 0; // Buffer vacío
-    void *buffer = malloc(2 * sizeof(int));
-    int offset = 0;
-
-    memcpy(buffer + offset, &OP, sizeof(int));
-    offset += sizeof(int);
-    memcpy(buffer + offset, &size, sizeof(int));
-
-    send(socket_conexion, buffer, 2 * sizeof(int), 0);
-
-    free(buffer);
-}*/
-
 void EnviarOpCode(int socket_conexion, int OP)
 {
    // Enviamos estrictamente los 4 bytes que componen el código de operación

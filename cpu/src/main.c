@@ -89,14 +89,12 @@ int main(int argc, char *argv[])
     saludar("cpu");
     // Obtenemos config pasándole la ruta del primer argumento (como hicimos con IO)
     ObtenerConfig(argv[1]);
-    printf("Se obtuvo el config\n"); // debug
 
     char *log_filename = string_from_format("cpu_%d.log", id_cpu);
     logger = log_create(log_filename, "CPU", true, log_level);
     free(log_filename);
 
     sockets_memory_sticks = list_create();
-    printf("Se crea la lista de memory sitsck\n"); // debug
 
     // ==========================================================
     // 1. CONEXIÓN DISPATCH (Principal para Procesos y Syscalls)
@@ -105,7 +103,6 @@ int main(int argc, char *argv[])
     socket_kernel_scheduler = CrearConexion(ip_kernel_scheduler, puerto_kernel_scheduler);
     EnviarOpCode(socket_kernel_scheduler, CPU_A_KERNEL_SCHEDULER);
     send(socket_kernel_scheduler, &id_cpu, sizeof(int), 0);
-    printf("Se conecto al kernel scheduler\n");
 
     // ==========================================================
     // 2. CONEXIÓN INTERRUPT (Exclusiva para desalojos/quantum)
@@ -113,13 +110,11 @@ int main(int argc, char *argv[])
     socket_kernel_interrupt = CrearConexion(ip_kernel_scheduler, puerto_kernel_scheduler);
     EnviarOpCode(socket_kernel_interrupt, CPU_A_KERNEL_SCHEDULER_INTERRUPT);
     send(socket_kernel_interrupt, &id_cpu, sizeof(int), 0);
-    printf("Se conecto socket para desalojos\n");
 
     // 3. NACIMIENTO DEL HILO DE INTERRUPCIONES (Una sola vez)
     pthread_t hilo_interrupciones;
     pthread_create(&hilo_interrupciones, NULL, escuchar_interrupciones, NULL);
     pthread_detach(hilo_interrupciones);
-    printf("Se creo el hilo de interrupciones\n");
 
     // ==========================================================
     // CONEXIÓN KERNEL MEMORY Y MEMORY STICKS

@@ -151,7 +151,6 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
     }
     else if (strcmp(syscall_nombre, "STDIN") == 0)
     {
-        printf("DEBUG: Entro por else if (strcmp(syscall_nombre, <STDIN>) == 0)\n");
         CambiarEstado(p, BLOCK);
         // lanzar timer de suspensión
         t_args_suspension *args_susp = malloc(sizeof(t_args_suspension));
@@ -388,7 +387,7 @@ void ProcesarSyscall(t_cpu_conectada *cpu)
             if (confirmacion_reintento == MENSAJE)
             {
                 // Si el KM mandó metadatos extras o payload en el paquete de éxito,
-                log_info(logger, "DEBUG: Reintento de CREAR_SEGMENTO exitoso para PID %d", pid);
+                log_info(logger, "## Reintento de CREAR_SEGMENTO exitoso para PID %d", pid);
             }
             pthread_mutex_unlock(&mutex_kernel_memory);
         }
@@ -768,7 +767,6 @@ void *AtenderCPU(void *args)
     {
         // Esperar a que el scheduler le asigne un proceso o reciba interrupción
         int op_code = RecibirOperacion(cpu->socket);
-        printf("DEBUG AtenderCPU: op_code recibido = %d (CPU %d)\n", op_code, cpu->id_cpu);
 
         if (op_code == -1)
         {
@@ -1394,7 +1392,6 @@ void *HiloQuantum(void *args)
 
     // mandar interrupción a la CPU
     log_info(logger, "## (%d) - Desalojado por fin de quantum", pid);
-    log_info(logger, "DEBUG: interrupcion via socket_interrupt=%d (CPU %d)", cpu->socket_interrupt, cpu->id_cpu);
 
     if (cpu->socket_interrupt <= 0)
     {
@@ -1520,7 +1517,6 @@ void IntentarDesalojoPorPrioridad(proceso *nuevo)
                 {
                     log_info(logger, "## (%d) Prioridad: %d - Desalojado por cola más prioritaria por el proceso %d con prioridad %d", ejecutando->pid, ejecutando->prioridad, nuevo->pid, nuevo->prioridad);
 
-                    log_info(logger, "DEBUG: interrupcion via socket_interrupt=%d (CPU %d)", cpu->socket_interrupt, cpu->id_cpu);
                     EnviarOpCode(cpu->socket_interrupt, INTERRUPCION_DESALOJO_COLA);
                 }
 
