@@ -34,7 +34,6 @@ sem_t sem_cpu_disponible;
 sem_t sem_memoria_disponible;
 sem_t sem_cpus_desalojadas; // cuenta cuántas CPUs confirmaron el desalojo
 sem_t sem_fin_compactacion;
-// sem_t sem_bloqueo_planificacion;
 pthread_mutex_t mutex_ready;
 pthread_mutex_t mutex_new;
 pthread_mutex_t mutex_cpus;
@@ -101,7 +100,6 @@ void IniciarSemaforos()
     sem_init(&sem_memoria_disponible, 0, 0);
     sem_init(&sem_cpus_desalojadas, 0, 0);
     sem_init(&sem_fin_compactacion, 0, 0);
-    // sem_init(&sem_bloqueo_planificacion, 0, 1);
     pthread_mutex_init(&mutex_ready, NULL);
     pthread_mutex_init(&mutex_cpus, NULL);
     pthread_mutex_init(&mutex_ios, NULL);
@@ -1557,8 +1555,6 @@ void IniciarCompactacion()
 {
     log_info(logger, "## Inicio de compactación");
 
-    // sem_wait(&sem_bloqueo_planificacion);
-
     // bloquear el envío de nuevos procesos
     pthread_mutex_lock(&mutex_compactacion);
     compactacion_en_curso = true;
@@ -1636,8 +1632,6 @@ void FinalizarCompactacion()
     for (int i = 0; i < cpus_a_esperar; i++)
         sem_post(&sem_cpu_disponible);
     pthread_mutex_unlock(&mutex_cpus);
-
-    // sem_post(&sem_bloqueo_planificacion);
 
     // hay memoria disponible tras compactar
     sem_post(&sem_memoria_disponible);
@@ -1729,7 +1723,6 @@ void Cleanup()
     sem_destroy(&sem_memoria_disponible);
     sem_destroy(&sem_cpus_desalojadas);
     sem_destroy(&sem_fin_compactacion);
-    // sem_destroy(&sem_bloqueo_planificacion);
 
     // destruir mutexes
     pthread_mutex_destroy(&mutex_ready);

@@ -143,13 +143,26 @@ void liberar_memoria_proceso(uint32_t pid)
         {
             t_segmento *seg = list_get(tabla, i);
 
-            // devuelvo espacio a los  huevcos libres
-            t_hueco_libre *nuevo_hueco = malloc(sizeof(t_hueco_libre));
-            nuevo_hueco->base = seg->base;
-            nuevo_hueco->tamanio = seg->tamanio;
-            list_add(lista_huecos_libres, nuevo_hueco);
+            // devuelvo espacio a los  huecos libres
+            if (seg->presente)
+            {
+                t_hueco_libre *nuevo_hueco = malloc(sizeof(t_hueco_libre));
+                nuevo_hueco->base = seg->base;
+                nuevo_hueco->tamanio = seg->tamanio;
+                list_add(lista_huecos_libres, nuevo_hueco);
+            }
+
             if (seg->bloques_swap != NULL)
             {
+                 // devolver los bloques al bitmap del SWAP
+                pthread_mutex_lock(&mutex_bitmap_swap);
+                for (int j = 0; j < list_size(seg->bloques_swap); j++)
+                {
+                    int nro_bloque = *(int *)list_get(seg->bloques_swap, j);
+                    bitarray_clean_bit(bitmap_swap, nro_bloque);
+                }
+                pthread_mutex_unlock(&mutex_bitmap_swap);
+
                 list_destroy_and_destroy_elements(seg->bloques_swap, free);
             }
             free(seg);
@@ -172,7 +185,7 @@ void InicarEstructurasMemoria()
     log_info(logger, "## Estructuras de Memoria iniciadas. Esperando Memory Sticks.");
 }
 
-void ObtenerConfig(char* path)
+void ObtenerConfig(char *path)
 {
     config = config_create(path);
     if (config == NULL)
@@ -471,6 +484,14 @@ void compactar_memoria()
         if (seg->base != desplazamiento_actual)
         {
             t_memory_stick *stick_origen = buscar_stick_por_direccion(seg->base);
+
+            if (stick_origen == NULL)
+            {
+                log_error(logger, "## Compactación abortada: base %d del segmento %d (PID %d) fuera de todo stick",
+                          seg->base, seg->id_segmento, seg->pid);
+                break;
+            }
+
             uint32_t offset_origen = seg->base - stick_origen->base_global;
 
             t_paquete *p_leer = CrearPaquete(LEER);
@@ -484,6 +505,15 @@ void compactar_memoria()
             void *buffer_temp = list_get(resp, 0);
 
             t_memory_stick *stick_destino = buscar_stick_por_direccion(desplazamiento_actual);
+
+            if (stick_destino == NULL)
+            {
+                log_error(logger, "## Compactación abortada: destino %d fuera de todo stick (huecos inconsistentes)",
+                          desplazamiento_actual);
+                list_clean_and_destroy_elements(resp, free);   // liberar lo ya leído del stick origen
+                break;
+            }
+
             uint32_t offset_destino = desplazamiento_actual - stick_destino->base_global;
 
             t_paquete *p_escribir = CrearPaquete(ESCRIBIR);
@@ -959,7 +989,7 @@ void atender_cliente(void *void_socket)
             uint32_t pid = *(uint32_t *)list_get(valores, 0);
             uint32_t dir_fisica = *(uint32_t *)list_get(valores, 1); // ¡Ya viene como física desde la CPU!
             uint32_t tamanio = *(uint32_t *)list_get(valores, 2);
-            
+
             /*
             uint32_t dir_fisica;
             if (traducir_direccion_logica(pid, dir_logica, &dir_fisica) == -1)
