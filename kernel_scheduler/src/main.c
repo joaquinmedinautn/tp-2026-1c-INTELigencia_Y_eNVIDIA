@@ -996,7 +996,8 @@ void EjecutarBSOD()
     }
     pthread_mutex_unlock(&mutex_cpus);
 
-    Cleanup();
+    log_destroy(logger);
+    exit(1);
 }
 
 void *EscucharKernelMemory(void *args)
@@ -1639,110 +1640,6 @@ void FinalizarCompactacion()
     sem_post(&sem_fin_compactacion);
 }
 
-void Cleanup()
-{
-    log_info(logger, "## Iniciando limpieza de recursos...");
-
-    // liberar strings duplicados con strdup
-    free(ip_kernel_memory);
-    free(algoritmo);
-
-    // cerrar socket del servidor y de kernel memory
-    close(socket_servidor);
-    close(socket_kernel_memory);
-    close(socket_km_eventos);
-
-    // cerrar y liberar CPUs
-    pthread_mutex_lock(&mutex_cpus);
-    for (int i = 0; i < list_size(lista_cpus); i++)
-    {
-        t_cpu_conectada *cpu = list_get(lista_cpus, i);
-        close(cpu->socket);
-        free(cpu);
-    }
-    list_destroy(lista_cpus);
-    pthread_mutex_unlock(&mutex_cpus);
-
-    // cerrar y liberar IOs
-    pthread_mutex_lock(&mutex_ios);
-    for (int i = 0; i < list_size(lista_ios); i++)
-    {
-        t_io_conectado *io = list_get(lista_ios, i);
-        close(io->socket);
-        free(io);
-    }
-    list_destroy(lista_ios);
-    pthread_mutex_unlock(&mutex_ios);
-
-    // liberar procesos
-    pthread_mutex_lock(&mutex_procesos);
-    for (int i = 0; i < list_size(lista_procesos); i++)
-    {
-        proceso *p = list_get(lista_procesos, i);
-        if (p->codigo_dinamico)
-            free(p->codigo);
-        free(p);
-    }
-    list_destroy(lista_procesos);
-    pthread_mutex_unlock(&mutex_procesos);
-
-    // liberar mutexes de usuario y sus colas
-    pthread_mutex_lock(&mutex_lista_mutex);
-    for (int i = 0; i < list_size(lista_mutex); i++)
-    {
-        t_mutex_proceso *m = list_get(lista_mutex, i);
-        queue_destroy(m->cola_espera);
-        pthread_mutex_destroy(&m->mutex_syscall);
-        free(m);
-    }
-    list_destroy(lista_mutex);
-    pthread_mutex_unlock(&mutex_lista_mutex);
-
-    // libera el array de colas_ready
-    for (int i = 0; i < cantidad_colas; i++)
-    {
-        queue_destroy(colas_ready[i]);
-        pthread_mutex_destroy(&mutex_colas_ready[i]);
-        free(queues_algorithms[i]);
-    }
-
-    // liberar colas
-    queue_destroy(cola_new);
-    queue_destroy(cola_block);
-    queue_destroy(cola_susp_block);
-    queue_destroy(cola_susp_ready);
-    free(colas_ready);
-    free(mutex_colas_ready);
-    free(queues_algorithms);
-    free(planification_algorithm);
-
-    // destruir semáforos
-    sem_destroy(&sem_new);
-    sem_destroy(&sem_ready);
-    sem_destroy(&sem_cpu_disponible);
-    sem_destroy(&sem_memoria_disponible);
-    sem_destroy(&sem_cpus_desalojadas);
-    sem_destroy(&sem_fin_compactacion);
-
-    // destruir mutexes
-    pthread_mutex_destroy(&mutex_ready);
-    pthread_mutex_destroy(&mutex_new);
-    pthread_mutex_destroy(&mutex_cpus);
-    pthread_mutex_destroy(&mutex_ios);
-    pthread_mutex_destroy(&mutex_procesos);
-    pthread_mutex_destroy(&mutex_block);
-    pthread_mutex_destroy(&mutex_susp);
-    pthread_mutex_destroy(&mutex_kernel_memory);
-    pthread_mutex_destroy(&mutex_quantum);
-    pthread_mutex_destroy(&mutex_lista_mutex);
-    pthread_mutex_destroy(&mutex_pid);
-    pthread_mutex_destroy(&mutex_compactacion);
-
-    // destruir logger al último
-    log_info(logger, "## Limpieza finalizada");
-    log_destroy(logger);
-}
-
 int main(int argc, char *argv[])
 {
     if (argc < 3)
@@ -1815,6 +1712,5 @@ int main(int argc, char *argv[])
     pthread_join(hilo_corto, NULL);
     pthread_join(hilo_mediano, NULL);
 
-    Cleanup();
     return 0;
 }
