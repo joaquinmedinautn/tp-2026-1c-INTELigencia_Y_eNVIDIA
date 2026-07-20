@@ -300,7 +300,7 @@ bool desuspender_proceso(uint32_t pid, int socket_cliente) {
   pthread_mutex_unlock(&mutex_tabla_segmentos);
   free(key);
 
-  if (tabla == NULL)z
+  if (tabla == NULL)
     return false;
 
   for (int i = 0; i < list_size(tabla); i++) {
@@ -925,12 +925,12 @@ void atender_cliente(void *void_socket) {
     case LEER: {
       t_list *valores = RecibirPaquete(socket_cliente);
       uint32_t pid = *(uint32_t *)list_get(valores, 0);
-      uint32_t dir_fisica = *(uint32_t *)list_get(
+      uint32_t dir_fisica_inicio = *(uint32_t *)list_get(
           valores, 1); // ¡Ya viene como física desde la CPU!
-      uint32_t tamanio = *(uint32_t *)list_get(valores, 2);
+      uint32_t tamanio_total = *(uint32_t *)list_get(valores, 2);
 
       log_info(logger, "## PID: %d Lectura Dir. Física: %d Tamaño: %d", pid,
-               dir_fisica, tamanio);
+               dir_fisica_inicio, tamanio_total);
 
       uint32_t bytes_pendientes = tamanio_total;
       uint32_t dir_fisica_actual = dir_fisica_inicio;
@@ -995,7 +995,7 @@ void atender_cliente(void *void_socket) {
       } else {
         // le devuelvo a la CPU un único paquete limpio con la data compactada
         t_paquete *res_final = CrearPaquete(LEER);
-         AgregarAPaquete(res_final, buffer_consolidated, tamanio_total);
+         AgregarAPaquete(res_final, buffer_consolidado, tamanio_total);
          EnviarPaquete(res_final, socket_cliente);
          EliminarPaquete(res_final);
          free(buffer_consolidado);
@@ -1007,13 +1007,13 @@ void atender_cliente(void *void_socket) {
     case ESCRIBIR: {
       t_list *valores = RecibirPaquete(socket_cliente);
       uint32_t pid = *(uint32_t *)list_get(valores, 0);
-      uint32_t dir_fisica = *(uint32_t *)list_get(
+      uint32_t dir_fisica_inicio = *(uint32_t *)list_get(
           valores, 1); // ¡Ya viene como física desde la CPU!
-      uint32_t tamanio = *(uint32_t *)list_get(valores, 2);
+      uint32_t tamanio_total = *(uint32_t *)list_get(valores, 2);
       void *datos_totales = list_get(valores, 3);
 
       log_info(logger, "## PID: %d Escritura Dir. Física: %d Tamaño: %d", pid,
-               dir_fisica, tamanio);
+               dir_fisica_inicio, tamanio_total);
 
       uint32_t bytes_pendientes = tamanio_total;
       uint32_t dir_fisica_actual = dir_fisica_inicio;
