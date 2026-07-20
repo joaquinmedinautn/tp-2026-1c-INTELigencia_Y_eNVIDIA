@@ -628,6 +628,11 @@ void atender_cliente(void *void_socket) {
     list_destroy_and_destroy_elements(valores_swap, free);
     return;
   }
+  case KERNEL_SCHEDULER_EVENTOS: {
+    socket_kernel_scheduler_eventos = socket_cliente;
+    log_info(logger, "## Kernel Scheduler Eventos Conectado");
+    break;
+  }
   case NUEVO_MEMORY_STICK: {
     t_list *valores = RecibirPaquete(socket_cliente);
     uint32_t tamanio_stick = *(uint32_t *)list_get(valores, 0);
