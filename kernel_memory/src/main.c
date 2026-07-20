@@ -628,11 +628,6 @@ void atender_cliente(void *void_socket) {
     list_destroy_and_destroy_elements(valores_swap, free);
     return;
   }
-  case KERNEL_SCHEDULER_EVENTOS: {
-    socket_kernel_scheduler_eventos = socket_cliente;
-    log_info(logger, "## Kernel Scheduler Eventos Conectado");
-    break;
-  }
   case NUEVO_MEMORY_STICK: {
     t_list *valores = RecibirPaquete(socket_cliente);
     uint32_t tamanio_stick = *(uint32_t *)list_get(valores, 0);
@@ -657,15 +652,24 @@ void atender_cliente(void *void_socket) {
     list_add(lista_memory_sticks, nuevo_stick);
     pthread_mutex_unlock(&mutex_memory_sticks);
 
+    
     pthread_mutex_lock(&mutex_huecos);
-    t_hueco_libre *nuevo_hueco = malloc(sizeof(t_hueco_libre));
-    nuevo_hueco->base = base_nueva;
-    nuevo_hueco->tamanio = tamanio_stick;
-    list_add(lista_huecos_libres, nuevo_hueco);
+    // vacio la lista vieja para no fragmentar en 4 partes independientes
+    list_clean_and_destroy_elements(lista_huecos_libres, free);
+
+    // calculo el tamaño total de la RAM unificada hasta el momento
+    uint32_t ram_total_acumulada = base_nueva + tamanio_stick;
+
+    // creo UN SOLO hueco libre gigante que represente la cinta continua de RAM
+    t_hueco_libre *hueco_unico = malloc(sizeof(t_hueco_libre));
+    hueco_unico->base = 0; // la RAM vacía arranca obligatoriamente en 0
+    hueco_unico->tamanio = ram_total_acumulada; // abarca toda la unión contigua
+    list_add(lista_huecos_libres, hueco_unico);
     pthread_mutex_unlock(&mutex_huecos);
 
     log_info(logger, "## Memory Stick de %d bytes mapeado en base %d",
              tamanio_stick, base_nueva);
+
     if (socket_cpu_notif != -1) {
       t_paquete *paq_cpu = CrearPaquete(NUEVO_MEMORY_STICK);
       AgregarAPaquete(paq_cpu, &tamanio_stick, sizeof(uint32_t));
@@ -676,12 +680,14 @@ void atender_cliente(void *void_socket) {
       EliminarPaquete(paq_cpu);
       log_info(logger, "## Notificación de nuevo hardware enviada a la CPU");
     } else {
-      log_warning(logger, "## Se concecto un Memory Stick pero la CPU no "
-                          "habrío su canal de notificaciones");
+      log_warning(logger, "## Se conectó un Memory Stick pero la CPU no "
+                          "abrió su canal de notificaciones");
     }
+
     if (socket_kernel_scheduler_eventos != -1) {
       EnviarOpCode(socket_kernel_scheduler_eventos, NUEVO_MEMORY_STICK);
     }
+
     list_destroy_and_destroy_elements(valores, free);
     return;
   }
@@ -991,18 +997,18 @@ void atender_cliente(void *void_socket) {
       if (error_hardware) {
         free(buffer_consolidado);
         manejo_de_memoria_corrupta();
-        
+
       } else {
         // le devuelvo a la CPU un único paquete limpio con la data compactada
         t_paquete *res_final = CrearPaquete(LEER);
-         AgregarAPaquete(res_final, buffer_consolidado, tamanio_total);
-         EnviarPaquete(res_final, socket_cliente);
-         EliminarPaquete(res_final);
-         free(buffer_consolidado);
+        AgregarAPaquete(res_final, buffer_consolidado, tamanio_total);
+        EnviarPaquete(res_final, socket_cliente);
+        EliminarPaquete(res_final);
+        free(buffer_consolidado);
       }
 
       list_destroy_and_destroy_elements(valores, free);
-       break;
+      break;
     }
     case ESCRIBIR: {
       t_list *valores = RecibirPaquete(socket_cliente);
