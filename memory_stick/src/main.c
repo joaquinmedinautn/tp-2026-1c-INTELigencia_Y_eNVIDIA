@@ -34,7 +34,7 @@ void atender_peticiones(void* arg){
     
     while(1){
         int cod_op = RecibirOperacion(socket_cliente);
-        if  (cod_op == -1){
+        if  (cod_op <= 0){
             log_error(logger, "Cliente Desconectado del Memory Stick");
             break;
         }
@@ -46,6 +46,11 @@ void atender_peticiones(void* arg){
         case LEER:{
             usleep(memory_delay * 1000);
                 t_list* valores = RecibirPaquete(socket_cliente);
+                if (valores == NULL || list_size(valores) < 2) {
+                    log_error(logger, "Error: Paquete LEER incompleto o corrupto");
+                    if (valores) list_destroy_and_destroy_elements(valores, free);
+                    break;
+                }
                 uint32_t offset_local = *(uint32_t*)list_get(valores, 0);
                 uint32_t tamanio = *(uint32_t*)list_get(valores, 1);
 
@@ -67,6 +72,11 @@ void atender_peticiones(void* arg){
         case ESCRIBIR: { 
             usleep(memory_delay * 1000);
                 t_list* valores = RecibirPaquete(socket_cliente);
+                if (valores == NULL || list_size(valores) < 3) {
+                    log_error(logger, "Error: Paquete ESCRIBIR incompleto o corrupto");
+                    if (valores) list_destroy_and_destroy_elements(valores, free);
+                    break;
+                }
                 uint32_t offset_local = *(uint32_t*)list_get(valores, 0);
                 uint32_t tamanio = *(uint32_t*)list_get(valores, 1);
                 void* datos = list_get(valores, 2);
@@ -81,7 +91,7 @@ void atender_peticiones(void* arg){
                 break;
             }
         default:
-            log_warning(logger, "Operacion desconocida en Memory Stick: %d", cod_op);
+            log_warning(logger, "Operacion desconocida en Memory Stick: %d (mantenemos conexion viva)", cod_op);
             break;
         }
     }

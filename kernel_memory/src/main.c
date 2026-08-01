@@ -41,7 +41,9 @@ pthread_mutex_t mutex_memory_sticks;
 
 t_list *segmentos_a_compactar;
 
-void manejo_de_memoria_corrupta(char* motivo) {
+pthread_mutex_t mutex_acceso_ram = PTHREAD_MUTEX_INITIALIZER;
+
+void manejo_de_memoria_corrupta(char *motivo) {
   log_error(logger, "Falsa alarma o fallo de hardware: %s", motivo);
   if (socket_kernel_scheduler_eventos != -1) {
     EnviarOpCode(socket_kernel_scheduler_eventos, MEMORIA_CORRUPTA);
@@ -59,6 +61,20 @@ t_memory_stick *buscar_stick_por_direccion(uint32_t dir_fisica) {
   }
   pthread_mutex_unlock(&mutex_memory_sticks);
   return NULL;
+}
+void *monitorear_desconexion_stick(void *arg) {
+    t_memory_stick *stick = (t_memory_stick *)arg;
+    
+    // Este hilo sólo se bloquea a esperar si el socket del Stick se cierra o muere
+    char buffer[1];
+    int res = recv(stick->socket, buffer, sizeof(buffer), MSG_PEEK); 
+    
+    if (res <= 0) {
+        log_error(logger, "CRÍTICO: El Memory Stick en base %d se desconectó repentinamente", stick->base_global);
+        manejo_de_memoria_corrupta("Memory Stick desconectado repentinamente");
+    }
+    
+    return NULL;
 }
 
 bool ordenar_huecos_por_base(void *a, void *b) {
@@ -245,6 +261,7 @@ void suspender_proceso(uint32_t pid) {
 
         if (stick != NULL) {
           uint32_t offset_local = dir_fisica_leer - stick->base_global;
+          pthread_mutex_lock(&mutex_acceso_ram);
           t_paquete *paq_leer = CrearPaquete(LEER);
           AgregarAPaquete(paq_leer, &offset_local, sizeof(uint32_t));
           AgregarAPaquete(paq_leer, &bytes_a_enviar, sizeof(uint32_t));
@@ -256,10 +273,13 @@ void suspender_proceso(uint32_t pid) {
             memcpy(buffer_bloque, list_get(resp, 0), bytes_a_enviar);
             list_clean_and_destroy_elements(resp, free);
           } else {
-            manejo_de_memoria_corrupta();
+            manejo_de_memoria_corrupta(
+                "Fallo de lectura en Stick durante suspensión a SWAP");
           }
+          pthread_mutex_unlock(&mutex_acceso_ram);
         } else {
-          manejo_de_memoria_corrupta();
+          manejo_de_memoria_corrupta(
+              "Dirección física fuera de rango durante suspensión a SWAP");
         }
 
         t_paquete *paq_swap = CrearPaquete(ESCRITURA_BLOQUE);
@@ -363,6 +383,7 @@ bool desuspender_proceso(uint32_t pid, int socket_cliente) {
 
           if (stick != NULL) {
             uint32_t offset_local = dir_fisica_escribir - stick->base_global;
+            pthread_mutex_lock(&mutex_acceso_ram);
             t_paquete *paq_escribir = CrearPaquete(ESCRIBIR);
             AgregarAPaquete(paq_escribir, &offset_local, sizeof(uint32_t));
             AgregarAPaquete(paq_escribir, &bytes_a_copiar, sizeof(uint32_t));
@@ -371,15 +392,18 @@ bool desuspender_proceso(uint32_t pid, int socket_cliente) {
             EliminarPaquete(paq_escribir);
 
             if (RecibirOperacion(stick->socket) != MENSAJE) {
-              manejo_de_memoria_corrupta();
+              manejo_de_memoria_corrupta("Respuesta de escritura en Stick no "
+                                         "fue MENSAJE al des-suspender");
             } else {
               log_info(logger,
                        "## Segmento %d (offset %d): Copiados %d bytes del Swap "
                        "al Stick",
                        seg->id_segmento, offset_segmento, bytes_a_copiar);
             }
+            pthread_mutex_unlock(&mutex_acceso_ram);
           } else {
-            manejo_de_memoria_corrupta();
+            manejo_de_memoria_corrupta(
+                "Dirección física fuera de rango al restaurar desde SWAP");
           }
 
           offset_segmento += bytes_a_copiar;
@@ -439,11 +463,14 @@ void compactar_memoria() {
                   "## Compactación abortada: base %d del segmento %d (PID %d) "
                   "fuera de todo stick",
                   seg->base, seg->id_segmento, seg->pid);
-        manejo_de_memoria_corrupta();
+        manejo_de_memoria_corrupta(
+            "Base origen fuera de todo Stick durante compactación");
         break;
       }
 
       uint32_t offset_origen = seg->base - stick_origen->base_global;
+
+      pthread_mutex_lock(&mutex_acceso_ram);
 
       t_paquete *p_leer = CrearPaquete(LEER);
       AgregarAPaquete(p_leer, &offset_origen, sizeof(uint32_t));
@@ -455,7 +482,8 @@ void compactar_memoria() {
       int cod_op_leer = RecibirOperacion(stick_origen->socket);
       if (cod_op_leer <= 0) {
         log_error(logger, "## Stick origen desconectado durante compactación");
-        manejo_de_memoria_corrupta();
+        manejo_de_memoria_corrupta(
+            "Stick origen cerrado o falló lectura durante compactación");
         break;
       }
 
@@ -470,7 +498,8 @@ void compactar_memoria() {
                   "## Compactación abortada: destino %d fuera de todo stick",
                   desplazamiento_actual);
         list_clean_and_destroy_elements(resp, free);
-        manejo_de_memoria_corrupta();
+        manejo_de_memoria_corrupta(
+            "Base destino fuera de todo Stick durante compactación");
         break;
       }
 
@@ -486,10 +515,13 @@ void compactar_memoria() {
 
       // --- VALIDAMOS RESPUESTA DE ESCRITURA ---
       int cod_op_esc = RecibirOperacion(stick_destino->socket);
+
+      pthread_mutex_unlock(&mutex_acceso_ram);
       if (cod_op_esc <= 0) {
         log_error(logger, "## Stick destino desconectado durante compactación");
         list_clean_and_destroy_elements(resp, free);
-        manejo_de_memoria_corrupta();
+        manejo_de_memoria_corrupta(
+            "Stick destino cerrado o falló escritura durante compactación");
         break;
       }
 
@@ -666,6 +698,9 @@ void atender_cliente(void *void_socket) {
     nuevo_stick->puerto = puerto_stick;
     nuevo_stick->ip = string_duplicate(ip_stick);
     list_add(lista_memory_sticks, nuevo_stick);
+    pthread_t hilo_monitor;
+    pthread_create(&hilo_monitor, NULL, monitorear_desconexion_stick, nuevo_stick);
+    pthread_detach(hilo_monitor);
     pthread_mutex_unlock(&mutex_memory_sticks);
 
     pthread_mutex_lock(&mutex_huecos);
@@ -699,8 +734,8 @@ void atender_cliente(void *void_socket) {
     }
 
     list_destroy_and_destroy_elements(valores, free);
-      return;
-    }
+    return;
+  }
   default:
     log_error(logger, "Código de operación desconocido al iniciar");
     close(socket_cliente);
@@ -938,8 +973,7 @@ void atender_cliente(void *void_socket) {
     case LEER: {
       t_list *valores = RecibirPaquete(socket_cliente);
       uint32_t pid = *(uint32_t *)list_get(valores, 0);
-      uint32_t dir_fisica_inicio = *(uint32_t *)list_get(
-          valores, 1); // ¡Ya viene como física desde la CPU!
+      uint32_t dir_fisica_inicio = *(uint32_t *)list_get(valores, 1);
       uint32_t tamanio_total = *(uint32_t *)list_get(valores, 2);
 
       log_info(logger, "## PID: %d Lectura Dir. Física: %d Tamaño: %d", pid,
@@ -950,11 +984,8 @@ void atender_cliente(void *void_socket) {
       uint32_t offset_buffer = 0;
       bool error_hardware = false;
 
-      // reservo un búfer temporal único del tamaño total pedido para
-      // consolidar los fragmentos
       void *buffer_consolidado = malloc(tamanio_total);
 
-      // bucle para iterar por los distintos Memory Sticks continuos
       while (bytes_pendientes > 0) {
         t_memory_stick *stick = buscar_stick_por_direccion(dir_fisica_actual);
         if (stick == NULL) {
@@ -962,10 +993,7 @@ void atender_cliente(void *void_socket) {
           break;
         }
 
-        // calculo cuántos bytes quedan en este Stick antes de su frontera
         uint32_t espacio_disponible_stick = stick->limite - dir_fisica_actual;
-
-        // leo solo lo que falta o lo que le quede al chip
         uint32_t bytes_a_leer_aqui =
             (bytes_pendientes < espacio_disponible_stick)
                 ? bytes_pendientes
@@ -973,33 +1001,44 @@ void atender_cliente(void *void_socket) {
 
         uint32_t offset_local = dir_fisica_actual - stick->base_global;
 
-        pthread_mutex_lock(&mutex_memory_sticks);
+        pthread_mutex_lock(&mutex_acceso_ram);
 
-        // mando la petición de lectura fraccionada al Stick correspondiente
         t_paquete *p = CrearPaquete(LEER);
         AgregarAPaquete(p, &offset_local, sizeof(uint32_t));
         AgregarAPaquete(p, &bytes_a_leer_aqui, sizeof(uint32_t));
         EnviarPaquete(p, stick->socket);
         EliminarPaquete(p);
 
-        // espero la respuesta de este chip de RAM
-        if (RecibirOperacion(stick->socket) == LEER) {
-          t_list *resp = RecibirPaquete(stick->socket);
-          void *fragmento_bytes = list_get(resp, 0);
+        int res_op = RecibirOperacion(stick->socket);
 
-          // acomodo los bytes leídos en la posición exacta del búfer final
-          memcpy((char *)buffer_consolidado + offset_buffer, fragmento_bytes,
-                 bytes_a_leer_aqui);
-
-          list_destroy_and_destroy_elements(resp, free);
-        } else {
+        // Si devuelve <= 0, el Stick se desconectó o la red cayó
+        if (res_op <= 0 || res_op != LEER) {
           error_hardware = true;
+          pthread_mutex_unlock(
+              &mutex_acceso_ram); // <-- UNLOCK OBLIGATORIO ANTES DEL BREAK
+          log_error(
+              logger,
+              "## Error de hardware: Stick en base %d fallo o cerrado (op: %d)",
+              stick->base_global, res_op);
           break;
         }
 
-        pthread_mutex_unlock(&mutex_memory_sticks);
+        t_list *resp = RecibirPaquete(stick->socket);
+        if (resp != NULL && list_size(resp) > 0) {
+          void *fragmento_bytes = list_get(resp, 0);
+          memcpy((char *)buffer_consolidado + offset_buffer, fragmento_bytes,
+                 bytes_a_leer_aqui);
+          list_destroy_and_destroy_elements(resp, free);
+        } else {
+          error_hardware = true;
+          if (resp)
+            list_destroy_and_destroy_elements(resp, free);
+          pthread_mutex_unlock(&mutex_acceso_ram);
+          break;
+        }
 
-        // avanzo el control al siguiente tramo contiguo
+        pthread_mutex_unlock(&mutex_acceso_ram);
+
         bytes_pendientes -= bytes_a_leer_aqui;
         dir_fisica_actual += bytes_a_leer_aqui;
         offset_buffer += bytes_a_leer_aqui;
@@ -1007,10 +1046,9 @@ void atender_cliente(void *void_socket) {
 
       if (error_hardware) {
         free(buffer_consolidado);
-        manejo_de_memoria_corrupta();
-
+        manejo_de_memoria_corrupta(
+            "Fallo de hardware o Stick desconectado durante LEER de CPU");
       } else {
-        // le devuelvo a la CPU un único paquete limpio con la data compactada
         t_paquete *res_final = CrearPaquete(LEER);
         AgregarAPaquete(res_final, buffer_consolidado, tamanio_total);
         EnviarPaquete(res_final, socket_cliente);
@@ -1024,8 +1062,7 @@ void atender_cliente(void *void_socket) {
     case ESCRIBIR: {
       t_list *valores = RecibirPaquete(socket_cliente);
       uint32_t pid = *(uint32_t *)list_get(valores, 0);
-      uint32_t dir_fisica_inicio = *(uint32_t *)list_get(
-          valores, 1); // ¡Ya viene como física desde la CPU!
+      uint32_t dir_fisica_inicio = *(uint32_t *)list_get(valores, 1);
       uint32_t tamanio_total = *(uint32_t *)list_get(valores, 2);
       void *datos_totales = list_get(valores, 3);
 
@@ -1037,7 +1074,6 @@ void atender_cliente(void *void_socket) {
       uint32_t offset_buffer = 0;
       bool error_hardware = false;
 
-      // bucle para fragmentar la escritura a través de los chips continuos
       while (bytes_pendientes > 0) {
         t_memory_stick *stick = buscar_stick_por_direccion(dir_fisica_actual);
         if (stick == NULL) {
@@ -1045,23 +1081,17 @@ void atender_cliente(void *void_socket) {
           break;
         }
 
-        // calcuilo cuánto espacio le queda a este Stick antes de terminarse
         uint32_t espacio_disponible_stick = stick->limite - dir_fisica_actual;
-
-        // evaluo si el dato entra completo o si se corta en la frontera del
-        // Stick
         uint32_t bytes_a_escribir_aqui =
             (bytes_pendientes < espacio_disponible_stick)
                 ? bytes_pendientes
                 : espacio_disponible_stick;
 
         uint32_t offset_local = dir_fisica_actual - stick->base_global;
-
-        // extraigo solo el pedazo de datos que le corresponde a este Stick
         void *fragmento_datos = (char *)datos_totales + offset_buffer;
 
-        pthread_mutex_lock(&mutex_memory_sticks);
-        // mando el paquete por red al chip correspondiente
+        pthread_mutex_lock(&mutex_acceso_ram);
+
         t_paquete *p = CrearPaquete(ESCRIBIR);
         AgregarAPaquete(p, &offset_local, sizeof(uint32_t));
         AgregarAPaquete(p, &bytes_a_escribir_aqui, sizeof(uint32_t));
@@ -1069,23 +1099,32 @@ void atender_cliente(void *void_socket) {
         EnviarPaquete(p, stick->socket);
         EliminarPaquete(p);
 
-        if (RecibirOperacion(stick->socket) != MENSAJE) {
+        int res_op = RecibirOperacion(stick->socket);
+
+        // Si devuelve <= 0 o no es MENSAJE, marcamos error y liberamos el mutex
+        if (res_op <= 0 || res_op != MENSAJE) {
           error_hardware = true;
+          pthread_mutex_unlock(
+              &mutex_acceso_ram); // <-- UNLOCK OBLIGATORIO ANTES DEL BREAK
+          log_error(logger,
+                    "## Error de hardware: Stick en base %d fallo o cerrado al "
+                    "escribir (op: %d)",
+                    stick->base_global, res_op);
           break;
         }
 
-        pthread_mutex_unlock(&mutex_memory_sticks);
+        pthread_mutex_unlock(&mutex_acceso_ram);
 
-        // desplazo los controles al siguiente tramo continuo
         bytes_pendientes -= bytes_a_escribir_aqui;
         dir_fisica_actual += bytes_a_escribir_aqui;
         offset_buffer += bytes_a_escribir_aqui;
       }
 
       if (error_hardware) {
-        manejo_de_memoria_corrupta();
+        manejo_de_memoria_corrupta(
+            "Fallo de hardware o Stick desconectado durante ESCRIBIR de CPU");
       } else {
-        EnviarOpCode(socket_cliente, MENSAJE); // confirmación final a la CPU
+        EnviarOpCode(socket_cliente, MENSAJE);
       }
 
       list_destroy_and_destroy_elements(valores, free);

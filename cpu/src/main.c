@@ -26,16 +26,25 @@ void *escuchar_interrupciones(void *arg)
 {
     while (1)
     {
-        // Leemos EXCLUSIVAMENTE del socket de interrupciones
         int operacion = RecibirOperacion(socket_kernel_interrupt);
 
-        if (operacion == -1 || operacion == DESCONEXION)
+        if (operacion <= 0)
         {
-            log_error(logger, "Se desconectó el canal de interrupciones");
+            // Solo sale si el socket se rompe/cierra
             break;
         }
 
-        // Si llega CUALQUIER señal por este socket, es una interrupción
+        if (operacion == DESCONEXION)
+        {
+            // Solo entra acá si el Scheduler mandó la orden explícita de BSOD
+            log_error(logger, "## Orden de DESCONEXION (BSOD) recibida del Scheduler. Finalizando.");
+            close(socket_kernel_scheduler);
+            close(socket_kernel_memory);
+            close(socket_kernel_interrupt);
+            log_destroy(logger);
+            exit(EXIT_SUCCESS);
+        }
+
         pthread_mutex_lock(&mutex_interrupcion);
         hay_interrupcion = 1;
         codigo_interrupcion = operacion;
@@ -43,7 +52,6 @@ void *escuchar_interrupciones(void *arg)
     }
     return NULL;
 }
-
 void *escuchar_nuevos_sticks(void *arg)
 {
     while (1)
@@ -174,6 +182,11 @@ int main(int argc, char *argv[])
             break;
         }
     }
+
+    close(socket_kernel_scheduler);
+    close(socket_kernel_memory);
+    close(socket_kernel_interrupt);
+    log_destroy(logger);
 
     return 0;
 }
