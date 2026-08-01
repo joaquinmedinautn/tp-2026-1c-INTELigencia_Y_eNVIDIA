@@ -41,8 +41,8 @@ pthread_mutex_t mutex_memory_sticks;
 
 t_list *segmentos_a_compactar;
 
-void manejo_de_memoria_corrupta() {
-  log_error(logger, "Un Memory Stick falló");
+void manejo_de_memoria_corrupta(char* motivo) {
+  log_error(logger, "Falsa alarma o fallo de hardware: %s", motivo);
   if (socket_kernel_scheduler_eventos != -1) {
     EnviarOpCode(socket_kernel_scheduler_eventos, MEMORIA_CORRUPTA);
   }
@@ -415,20 +415,17 @@ void recolectar_segmentos_presentes(char *key, void *value) {
 void compactar_memoria() {
   log_info(logger, "## Iniciando Compactación...");
 
-  // eecolectl TODOS los segmentos presentes en RAM
   segmentos_a_compactar = list_create();
 
   pthread_mutex_lock(&mutex_tabla_segmentos);
   dictionary_iterator(tabla_segmentos, recolectar_segmentos_presentes);
   pthread_mutex_unlock(&mutex_tabla_segmentos);
 
-  // ordeno los segmentos por su dirección base actual
   bool ordenar_segmentos_por_base(void *a, void *b) {
     return ((t_segmento *)a)->base < ((t_segmento *)b)->base;
   }
   list_sort(segmentos_a_compactar, ordenar_segmentos_por_base);
 
-  // empujo todos los segmentos hacia el principio (Base 0)
   uint32_t desplazamiento_actual = 0;
 
   for (int i = 0; i < list_size(segmentos_a_compactar); i++) {
@@ -442,6 +439,7 @@ void compactar_memoria() {
                   "## Compactación abortada: base %d del segmento %d (PID %d) "
                   "fuera de todo stick",
                   seg->base, seg->id_segmento, seg->pid);
+        manejo_de_memoria_corrupta();
         break;
       }
 
@@ -453,7 +451,14 @@ void compactar_memoria() {
       EnviarPaquete(p_leer, stick_origen->socket);
       EliminarPaquete(p_leer);
 
-      RecibirOperacion(stick_origen->socket);
+      // --- VALIDAMOS RESPUESTA DE LECTURA ---
+      int cod_op_leer = RecibirOperacion(stick_origen->socket);
+      if (cod_op_leer <= 0) {
+        log_error(logger, "## Stick origen desconectado durante compactación");
+        manejo_de_memoria_corrupta();
+        break;
+      }
+
       t_list *resp = RecibirPaquete(stick_origen->socket);
       void *buffer_temp = list_get(resp, 0);
 
@@ -462,11 +467,10 @@ void compactar_memoria() {
 
       if (stick_destino == NULL) {
         log_error(logger,
-                  "## Compactación abortada: destino %d fuera de todo stick "
-                  "(huecos inconsistentes)",
+                  "## Compactación abortada: destino %d fuera de todo stick",
                   desplazamiento_actual);
-        list_clean_and_destroy_elements(
-            resp, free); // liberar lo ya leído del stick origen
+        list_clean_and_destroy_elements(resp, free);
+        manejo_de_memoria_corrupta();
         break;
       }
 
@@ -480,7 +484,14 @@ void compactar_memoria() {
       EnviarPaquete(p_escribir, stick_destino->socket);
       EliminarPaquete(p_escribir);
 
-      RecibirOperacion(stick_destino->socket);
+      // --- VALIDAMOS RESPUESTA DE ESCRITURA ---
+      int cod_op_esc = RecibirOperacion(stick_destino->socket);
+      if (cod_op_esc <= 0) {
+        log_error(logger, "## Stick destino desconectado durante compactación");
+        list_clean_and_destroy_elements(resp, free);
+        manejo_de_memoria_corrupta();
+        break;
+      }
 
       list_clean_and_destroy_elements(resp, free);
       seg->base = desplazamiento_actual;
@@ -493,7 +504,7 @@ void compactar_memoria() {
   }
   list_destroy(segmentos_a_compactar);
 
-  // destruyo la vieja lista de huecos y crear uno solo al final
+  // Recreación de hueco único final
   pthread_mutex_lock(&mutex_huecos);
   list_clean_and_destroy_elements(lista_huecos_libres, free);
 
@@ -688,17 +699,6 @@ void atender_cliente(void *void_socket) {
     }
 
     list_destroy_and_destroy_elements(valores, free);
-    
-    while (1){
-      int cod_op_strick = RecibirOperacion(socket_cliente);
-
-      if (cod_op_strick <= 0){
-        log_error(logger, "CRITICO: Un Memory Stick se desconectó ionesperadamente");
-        manejar_desconexion_memory_stick();
-        close(socket_cliente);
-        return;
-        }
-      }
       return;
     }
   default:

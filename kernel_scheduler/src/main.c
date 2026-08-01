@@ -815,6 +815,7 @@ void *AtenderCPU(void *args)
                     log_error(logger, "## CPU_PID_DEVUELTO: proceso %d no encontrado", pid);
                     free(motivo);
                     sem_post(&sem_cpu_disponible);
+                    list_destroy_and_destroy_elements(valores, free);
                     break;
                 }
 
@@ -842,6 +843,9 @@ void *AtenderCPU(void *args)
 
                     sem_post(&sem_cpu_disponible);
                     sem_post(&sem_memoria_disponible);
+                    free(motivo);
+                    list_destroy_and_destroy_elements(valores, free);
+
                     break;
                 }
                 // else // INTERRUPCION
@@ -999,7 +1003,6 @@ void EjecutarBSOD()
     }
     pthread_mutex_unlock(&mutex_cpus);
 
-    // 3. Opcional: avisar a las IOs si querés que también aborten
     pthread_mutex_lock(&mutex_ios);
     for (int i = 0; i < list_size(lista_ios); i++)
     {
@@ -1009,8 +1012,11 @@ void EjecutarBSOD()
     }
     pthread_mutex_unlock(&mutex_ios);
 
+    list_clean_and_destroy_elements(lista_cpus, free);
+    list_clean_and_destroy_elements(lista_ios, free);
     // 4. Cerrar logger y terminar el proceso Kernel Scheduler
     log_destroy(logger);
+    config_destroy(config);
     exit(EXIT_FAILURE);
 }
 
