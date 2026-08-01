@@ -972,9 +972,11 @@ void *AtenderIO(void *args)
 
 void EjecutarBSOD()
 {
-    log_error(logger, "## Blue Screen of Death - Memoria corrupta");
+    log_error(logger, "==================================================");
+    log_error(logger, "## Blue Screen of Death - Memoria corrupta detectada");
+    log_error(logger, "==================================================");
 
-    // cambiar todos los procesos a EXIT
+    // 1. Cambiar todos los procesos activos a EXIT
     pthread_mutex_lock(&mutex_procesos);
     for (int i = 0; i < list_size(lista_procesos); i++)
     {
@@ -987,17 +989,29 @@ void EjecutarBSOD()
     }
     pthread_mutex_unlock(&mutex_procesos);
 
-    // desconectar todas las CPUs
+    // 2. Avisar y desconectar a todas las CPUs conectadas
     pthread_mutex_lock(&mutex_cpus);
     for (int i = 0; i < list_size(lista_cpus); i++)
     {
         t_cpu_conectada *cpu = list_get(lista_cpus, i);
         EnviarOpCode(cpu->socket, DESCONEXION);
+        close(cpu->socket);
     }
     pthread_mutex_unlock(&mutex_cpus);
 
+    // 3. Opcional: avisar a las IOs si querés que también aborten
+    pthread_mutex_lock(&mutex_ios);
+    for (int i = 0; i < list_size(lista_ios); i++)
+    {
+        t_io_conectado *io = list_get(lista_ios, i);
+        EnviarOpCode(io->socket, DESCONEXION);
+        close(io->socket);
+    }
+    pthread_mutex_unlock(&mutex_ios);
+
+    // 4. Cerrar logger y terminar el proceso Kernel Scheduler
     log_destroy(logger);
-    exit(1);
+    exit(EXIT_FAILURE);
 }
 
 void *EscucharKernelMemory(void *args)
@@ -1027,6 +1041,11 @@ void *EscucharKernelMemory(void *args)
             FinalizarCompactacion();
             sem_post(&sem_memoria_disponible);
             break;
+        
+        case -1:
+            log_error(logger, "Kernel Memory se desconectó inesperadamente.");
+            EjecutarBSOD();
+            return NULL;
 
         default:
             log_error(logger, "Notificación desconocida de Kernel Memory: %d", op_code);

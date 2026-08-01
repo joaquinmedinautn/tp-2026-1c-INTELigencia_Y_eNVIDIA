@@ -383,7 +383,7 @@ bool desuspender_proceso(uint32_t pid, int socket_cliente) {
           }
 
           offset_segmento += bytes_a_copiar;
-          list_destroy(valores_bloque);
+          list_destroy_and_destroy_elements(valores_bloque, free);
         }
 
         // libero el bloque en el bitmap del SWAP
@@ -657,19 +657,13 @@ void atender_cliente(void *void_socket) {
     list_add(lista_memory_sticks, nuevo_stick);
     pthread_mutex_unlock(&mutex_memory_sticks);
 
-    
     pthread_mutex_lock(&mutex_huecos);
-    // vacio la lista vieja para no fragmentar en 4 partes independientes
-    list_clean_and_destroy_elements(lista_huecos_libres, free);
+    t_hueco_libre *nuevo_hueco_stick = malloc(sizeof(t_hueco_libre));
+    nuevo_hueco_stick->base = base_nueva;
+    nuevo_hueco_stick->tamanio = tamanio_stick;
+    list_add(lista_huecos_libres, nuevo_hueco_stick);
 
-    // calculo el tamaño total de la RAM unificada hasta el momento
-    uint32_t ram_total_acumulada = base_nueva + tamanio_stick;
-
-    // creo UN SOLO hueco libre gigante que represente la cinta continua de RAM
-    t_hueco_libre *hueco_unico = malloc(sizeof(t_hueco_libre));
-    hueco_unico->base = 0; // la RAM vacía arranca obligatoriamente en 0
-    hueco_unico->tamanio = ram_total_acumulada; // abarca toda la unión contigua
-    list_add(lista_huecos_libres, hueco_unico);
+    consolidar_huecos_libres();
     pthread_mutex_unlock(&mutex_huecos);
 
     log_info(logger, "## Memory Stick de %d bytes mapeado en base %d",
@@ -694,8 +688,19 @@ void atender_cliente(void *void_socket) {
     }
 
     list_destroy_and_destroy_elements(valores, free);
-    return;
-  }
+    
+    while (1){
+      int cod_op_strick = RecibirOperacion(socket_cliente);
+
+      if (cod_op_strick <= 0){
+        log_error(logger, "CRITICO: Un Memory Stick se desconectó ionesperadamente");
+        manejar_desconexion_memory_stick();
+        close(socket_cliente);
+        return;
+        }
+      }
+      return;
+    }
   default:
     log_error(logger, "Código de operación desconocido al iniciar");
     close(socket_cliente);
@@ -739,15 +744,12 @@ void atender_cliente(void *void_socket) {
       uint32_t pid = *(uint32_t *)list_get(valores, 0);
       uint32_t pc = *(uint32_t *)list_get(valores, 1);
 
-      char *instruccion = obtener_instruccion(pid, pc);
+      char *instruccion_raw = obtener_instruccion(pid, pc);
 
-      usleep(instruction_delay * 1000); // latencia obligatoria
+      usleep(instruction_delay * 1000);
 
-      if (instruccion == NULL) {
-        instruccion = strdup("EXIT");
-      } else {
-        instruccion = strdup(instruccion);
-      }
+      char *instruccion =
+          strdup(instruccion_raw != NULL ? instruccion_raw : "EXIT");
 
       log_info(logger, "## PID: %d %d Instrucción: %s", pid, pc, instruccion);
 
@@ -971,6 +973,8 @@ void atender_cliente(void *void_socket) {
 
         uint32_t offset_local = dir_fisica_actual - stick->base_global;
 
+        pthread_mutex_lock(&mutex_memory_sticks);
+
         // mando la petición de lectura fraccionada al Stick correspondiente
         t_paquete *p = CrearPaquete(LEER);
         AgregarAPaquete(p, &offset_local, sizeof(uint32_t));
@@ -992,6 +996,8 @@ void atender_cliente(void *void_socket) {
           error_hardware = true;
           break;
         }
+
+        pthread_mutex_unlock(&mutex_memory_sticks);
 
         // avanzo el control al siguiente tramo contiguo
         bytes_pendientes -= bytes_a_leer_aqui;
@@ -1054,6 +1060,7 @@ void atender_cliente(void *void_socket) {
         // extraigo solo el pedazo de datos que le corresponde a este Stick
         void *fragmento_datos = (char *)datos_totales + offset_buffer;
 
+        pthread_mutex_lock(&mutex_memory_sticks);
         // mando el paquete por red al chip correspondiente
         t_paquete *p = CrearPaquete(ESCRIBIR);
         AgregarAPaquete(p, &offset_local, sizeof(uint32_t));
@@ -1066,6 +1073,8 @@ void atender_cliente(void *void_socket) {
           error_hardware = true;
           break;
         }
+
+        pthread_mutex_unlock(&mutex_memory_sticks);
 
         // desplazo los controles al siguiente tramo continuo
         bytes_pendientes -= bytes_a_escribir_aqui;
